@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+@layer utilities {
+    .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+    }
+
+    .scrollbar-hide {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+
+    /* Hide Emoji Picker Scrollbar */
+    .emoji-picker-container aside.emoji-picker-react {
+        height: 350px !important;
+    }
+
+    .emoji-picker-container .epr-body::-webkit-scrollbar {
+        width: 0px;
+        background: transparent;
+    }
+
+    .emoji-picker-container .epr-body {
+        -ms-overflow-style: none;
+        /* IE and Edge */
+        scrollbar-width: none;
+        /* Firefox */
+    }
+
+}
+
+/* Code Block Styling */
+pre {
+    background-color: #1e1f22 !important;
+    /* slightly lighter dark background */
+    border: 1px solid #2b2d31 !important;
+    border-radius: 6px;
+    padding: 10px !important;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.9em;
+    color: #ffca28 !important;
+    /* Orange/Amber text */
+    white-space: pre-wrap;
+    margin: 8px 0 !important;
+    overflow-x: auto;
+}
+
+code {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    background-color: #1e1f22 !important;
+    /* match pre bg */
+    padding: 2px 4px !important;
+    border-radius: 4px;
+    color: #ffca28 !important;
+    /* Orange/Amber text */
+}
+
+/* Blockquote Styling for Chat Input & Messages */
+/* Blockquote Styling for Chat Input & Messages */
+blockquote {
+    border-left: 3px solid #cbd5e1;
+    /* slate-300 */
+    padding-left: 10px;
+    margin: 5px 0;
+    color: #94a3b8;
+    /* slate-400 */
+}
+
+/* List styling inside contentEditable & Messages */
+ul {
+    list-style-type: disc !important;
+    padding-left: 20px !important;
+    margin: 5px 0;
+}
+
+ol {
+    list-style-type: decimal !important;
+    padding-left: 20px !important;
+    margin: 5px 0;
+}
+
+li {
+    margin-bottom: 2px;
+}
