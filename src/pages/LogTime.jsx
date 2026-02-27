@@ -352,10 +352,41 @@ const LogTime = () => {
         }
     };
 
+    const parseCustomDate = (dateString) => {
+        if (!dateString) return null;
+        const str = String(dateString).trim();
+        if (str.includes('T') || str.includes(':')) {
+            return new Date(str);
+        }
+        const parts = str.split(/[\.\-\/]/);
+        if (parts.length === 3) {
+            if (parts[0].length === 4) {
+                return new Date(str);
+            }
+            const day = parseInt(parts[0], 10);
+            const month = parseInt(parts[1], 10) - 1;
+            const year = parseInt(parts[2], 10);
+            return new Date(year, month, day);
+        }
+        return new Date(str);
+    };
+
     const filteredLogs = recentLogs.filter(log => {
+        const d = parseCustomDate(log.date || log.Date);
+        const fromDate = parseCustomDate(filters.fromDate);
+        const toDate = parseCustomDate(filters.toDate);
+
+        // Filter valid parsed dates, fall back to string logic if NaN
+        const isAfterFrom = (!fromDate || isNaN(fromDate.getTime()) || !d || isNaN(d.getTime()))
+            ? (!filters.fromDate || log.date >= filters.fromDate)
+            : (d.getTime() >= fromDate.getTime());
+
+        const isBeforeTo = (!toDate || isNaN(toDate.getTime()) || !d || isNaN(d.getTime()))
+            ? (!filters.toDate || log.date <= filters.toDate)
+            : (d.getTime() <= toDate.getTime());
+
         return (
-            (!filters.fromDate || log.date >= filters.fromDate) &&
-            (!filters.toDate || log.date <= filters.toDate) &&
+            isAfterFrom && isBeforeTo &&
             (!filters.projectName || log.projectName === filters.projectName) &&
             (!filters.taskOwner || log.taskOwner === filters.taskOwner) &&
             (!filters.taskType || log.taskType === filters.taskType) &&
@@ -387,7 +418,19 @@ const LogTime = () => {
     };
 
     const groupedLogs = filteredLogs.reduce((groups, log) => {
-        const date = log.date;
+        let rawDate = log.date || log.Date || "Old Tasks";
+        let date = rawDate;
+
+        if (typeof date === 'string' && date !== "Old Tasks") {
+            if (date.includes('T')) {
+                date = date.split('T')[0];
+            } else if (date.includes(' ')) {
+                date = date.split(' ')[0];
+            }
+            // Strip any remaining whitespace
+            date = date.trim();
+        }
+
         if (!groups[date]) {
             groups[date] = [];
         }
@@ -396,7 +439,13 @@ const LogTime = () => {
     }, {});
 
     // Sort dates descending for display
-    const sortedDates = Object.keys(groupedLogs).sort((a, b) => new Date(b) - new Date(a));
+    const sortedDates = Object.keys(groupedLogs).sort((a, b) => {
+        if (a === "Old Tasks") return 1;
+        if (b === "Old Tasks") return -1;
+        const da = parseCustomDate(a);
+        const db = parseCustomDate(b);
+        return db.getTime() - da.getTime();
+    });
 
     // Action Popup Handler
     const handleActionClick = (log, index) => {

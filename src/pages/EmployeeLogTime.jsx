@@ -188,13 +188,44 @@ const EmployeeLogTime = () => {
     // uniqueEmployees now uses all employees from state, not just those in logs
     const uniqueEmployees = employees.map(e => ({ value: e._id, label: e.name })).sort((a, b) => a.label.localeCompare(b.label));
 
+    const parseCustomDate = (dateString) => {
+        if (!dateString) return null;
+        const str = String(dateString).trim();
+        if (str.includes('T') || str.includes(':')) {
+            return new Date(str);
+        }
+        const parts = str.split(/[\.\-\/]/);
+        if (parts.length === 3) {
+            if (parts[0].length === 4) {
+                return new Date(str);
+            }
+            const day = parseInt(parts[0], 10);
+            const month = parseInt(parts[1], 10) - 1;
+            const year = parseInt(parts[2], 10);
+            return new Date(year, month, day);
+        }
+        return new Date(str);
+    };
+
     const getGroupedLogs = () => {
         const grouped = {};
 
         // Filter logs first
         const filteredLogs = logs.filter(log => {
-            if (filters.fromDate && log.date < filters.fromDate) return false;
-            if (filters.toDate && log.date > filters.toDate) return false;
+            const d = parseCustomDate(log.date || log.Date);
+            const fromDate = parseCustomDate(filters.fromDate);
+            const toDate = parseCustomDate(filters.toDate);
+
+            const isAfterFrom = (!fromDate || isNaN(fromDate.getTime()) || !d || isNaN(d.getTime()))
+                ? (!filters.fromDate || log.date >= filters.fromDate)
+                : (d.getTime() >= fromDate.getTime());
+
+            const isBeforeTo = (!toDate || isNaN(toDate.getTime()) || !d || isNaN(d.getTime()))
+                ? (!filters.toDate || log.date <= filters.toDate)
+                : (d.getTime() <= toDate.getTime());
+
+            if (!isAfterFrom) return false;
+            if (!isBeforeTo) return false;
             if (filters.project && log.projectName !== filters.project) return false;
 
             if (filters.employeeId) {
@@ -212,7 +243,18 @@ const EmployeeLogTime = () => {
         });
 
         filteredLogs.forEach(log => {
-            const date = log.date || "Old Tasks";
+            let rawDate = log.date || log.Date || "Old Tasks";
+            let date = rawDate;
+
+            if (typeof date === 'string' && date !== "Old Tasks") {
+                if (date.includes('T')) {
+                    date = date.split('T')[0];
+                } else if (date.includes(' ')) {
+                    date = date.split(' ')[0];
+                }
+                date = date.trim();
+            }
+
             if (!grouped[date]) {
                 grouped[date] = [];
             }
@@ -223,7 +265,9 @@ const EmployeeLogTime = () => {
         const sortedDates = Object.keys(grouped).sort((a, b) => {
             if (a === "Old Tasks") return 1;
             if (b === "Old Tasks") return -1;
-            return new Date(b) - new Date(a);
+            const da = parseCustomDate(a);
+            const db = parseCustomDate(b);
+            return db.getTime() - da.getTime();
         });
 
         return { grouped, sortedDates, filteredCount: filteredLogs.length, filteredLogs };

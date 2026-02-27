@@ -489,8 +489,8 @@ const ProjectReportPage = () => {
                                                                                 #{displayTaskNo}
                                                                             </span>
                                                                         </div>
-                                                                        <span className="text-xs text-gray-400 font-medium truncate mt-0.5">
-                                                                            {formatDate(rawDate)}
+                                                                        <span className="text-[10px] uppercase tracking-wide text-indigo-500 font-bold truncate mt-0.5" title={log.employeeRole || log.taskOwnerRole || "Employee"}>
+                                                                            {log.employeeRole || log.taskOwnerRole || "Employee"}
                                                                         </span>
                                                                     </div>
                                                                 </td>
@@ -508,7 +508,8 @@ const ProjectReportPage = () => {
                                                                         <span className="text-sm font-bold text-gray-800">
                                                                             {displayDuration || "-"}
                                                                         </span>
-                                                                        <div className="flex items-center gap-1 text-xs text-gray-400 mt-0.5">
+                                                                        <div className="flex items-center gap-1 text-xs text-gray-400 mt-0.5 flex-wrap">
+                                                                            <span className="font-bold text-gray-500 mr-1">{formatDate(rawDate)}</span>
                                                                             <span className="font-mono">{formatTime(log.startTime)}</span>
                                                                             <span className="text-gray-300 mx-1">➜</span>
                                                                             <span className="font-mono">{formatTime(log.endTime)}</span>

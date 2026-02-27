@@ -85,9 +85,30 @@ const EmployeeReportPage = () => {
         }
     };
 
+    const parseCustomDate = (dateString) => {
+        if (!dateString) return null;
+        const str = String(dateString).trim();
+        if (str.includes('T') || str.includes(':')) {
+            return new Date(str);
+        }
+        const parts = str.split(/[\.\-\/]/);
+        if (parts.length === 3) {
+            if (parts[0].length === 4) {
+                return new Date(str);
+            }
+            const day = parseInt(parts[0], 10);
+            const month = parseInt(parts[1], 10) - 1;
+            const year = parseInt(parts[2], 10);
+            return new Date(year, month, day);
+        }
+        return new Date(str);
+    };
+
     const formatDate = (dateStr) => {
         if (!dateStr) return 'N/A';
-        return new Date(dateStr).toLocaleDateString('en-US', {
+        const d = parseCustomDate(dateStr);
+        if (!d || isNaN(d.getTime())) return dateStr;
+        return d.toLocaleDateString('en-US', {
             year: 'numeric', month: 'short', day: 'numeric'
         });
     };
@@ -138,8 +159,11 @@ const EmployeeReportPage = () => {
     };
 
     const isDateInRange = (dateString, filterType) => {
-        if (!dateString) return false;
-        const d = new Date(dateString);
+        if (!dateString) return true;
+
+        const d = parseCustomDate(dateString);
+        if (!d || isNaN(d.getTime())) return true; // Keep visible if unparseable
+
         d.setHours(0, 0, 0, 0);
 
         const today = new Date();
@@ -166,6 +190,8 @@ const EmployeeReportPage = () => {
             const past = new Date(today);
             past.setDate(today.getDate() - 30);
             return d.getTime() >= past.getTime() && d.getTime() <= today.getTime();
+        } else if (filterType === 'All Time') {
+            return true;
         }
         return true;
     };
@@ -282,7 +308,8 @@ const EmployeeReportPage = () => {
                                                     "Particular Date",
                                                     "From Date to To Date",
                                                     "Last 7 Days / Week",
-                                                    "Last 30 Days / Month"
+                                                    "Last 30 Days / Month",
+                                                    "All Time"
                                                 ]}
                                                 value={dateFilterType}
                                                 onChange={(val) => setDateFilterType(val)}
