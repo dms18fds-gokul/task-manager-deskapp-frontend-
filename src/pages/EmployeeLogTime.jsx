@@ -31,6 +31,21 @@ const EmployeeLogTime = () => {
         fetchFilterOptions();
     }, []);
 
+    // Listener for auto-refresh when offline tasks are synced or added
+    useEffect(() => {
+        const handleOfflineUpdate = () => {
+            fetchLogs();
+        };
+
+        window.addEventListener('offlineTaskSynced', handleOfflineUpdate);
+        window.addEventListener('offlineTaskAdded', handleOfflineUpdate);
+
+        return () => {
+            window.removeEventListener('offlineTaskSynced', handleOfflineUpdate);
+            window.removeEventListener('offlineTaskAdded', handleOfflineUpdate);
+        };
+    }, []);
+
     const fetchFilterOptions = async () => {
         try {
             const res = await fetch(`${API_URL}/work-logs/filters`);
@@ -57,32 +72,61 @@ const EmployeeLogTime = () => {
     };
 
     const fetchLogs = async () => {
+        let serverData = [];
+        let fetchSuccess = false;
         try {
             setLoading(true);
             const res = await fetch(`${API_URL}/work-logs`);
             if (res.ok) {
-                const data = await res.json();
-                // Sort by date desc, then by taskNo ascending (to match user request)
-                const sorted = data.sort((a, b) => {
-                    const dateDiff = new Date(b.date) - new Date(a.date);
-                    if (dateDiff !== 0) return dateDiff;
-
-                    // Sort by taskNo descending (e.g. 3, 2, 1...)
-                    // taskNo can be string or number, parse to int
-                    const taskA = parseInt(a.taskNo || "0", 10);
-                    const taskB = parseInt(b.taskNo || "0", 10);
-                    return taskB - taskA;
-                });
-                setLogs(sorted);
+                serverData = await res.json();
+                fetchSuccess = true;
                 setError(null);
             } else {
                 setError("Failed to fetch logs.");
             }
         } catch (error) {
             console.error("Error fetching logs:", error);
-            setError("Error connecting to server.");
+            setError("Error connecting to server. Showing available logs.");
         } finally {
             setLoading(false);
+        }
+
+        // Merge with offline pending tasks from localStorage
+        const offlineTasksStr = localStorage.getItem('offlineQuickTasks');
+        let pendingLogs = [];
+        if (offlineTasksStr) {
+            try {
+                const parsedTasks = JSON.parse(offlineTasksStr);
+                pendingLogs = parsedTasks.map((t, i) => ({
+                    ...t,
+                    _id: `pending-${Date.now()}-${i}`,
+                    isPendingOffline: true,
+                    logType: "Offline Task Pending"
+                }));
+            } catch (e) {
+                console.error("Error parsing offline tasks", e);
+            }
+        }
+
+        const applySort = (data) => {
+            return [...data].sort((a, b) => {
+                const dateDiff = new Date(b.date) - new Date(a.date);
+                if (dateDiff !== 0) return dateDiff;
+                const taskA = parseInt(a.taskNo || "0", 10);
+                const taskB = parseInt(b.taskNo || "0", 10);
+                return taskB - taskA;
+            });
+        };
+
+        if (fetchSuccess) {
+            const combinedData = [...serverData, ...pendingLogs];
+            setLogs(applySort(combinedData));
+        } else {
+            setLogs(prevLogs => {
+                const prevServerData = prevLogs.filter(log => !log.isPendingOffline);
+                const combinedData = [...prevServerData, ...pendingLogs];
+                return applySort(combinedData);
+            });
         }
     };
 
@@ -188,44 +232,13 @@ const EmployeeLogTime = () => {
     // uniqueEmployees now uses all employees from state, not just those in logs
     const uniqueEmployees = employees.map(e => ({ value: e._id, label: e.name })).sort((a, b) => a.label.localeCompare(b.label));
 
-    const parseCustomDate = (dateString) => {
-        if (!dateString) return null;
-        const str = String(dateString).trim();
-        if (str.includes('T') || str.includes(':')) {
-            return new Date(str);
-        }
-        const parts = str.split(/[\.\-\/]/);
-        if (parts.length === 3) {
-            if (parts[0].length === 4) {
-                return new Date(str);
-            }
-            const day = parseInt(parts[0], 10);
-            const month = parseInt(parts[1], 10) - 1;
-            const year = parseInt(parts[2], 10);
-            return new Date(year, month, day);
-        }
-        return new Date(str);
-    };
-
     const getGroupedLogs = () => {
         const grouped = {};
 
         // Filter logs first
         const filteredLogs = logs.filter(log => {
-            const d = parseCustomDate(log.date || log.Date);
-            const fromDate = parseCustomDate(filters.fromDate);
-            const toDate = parseCustomDate(filters.toDate);
-
-            const isAfterFrom = (!fromDate || isNaN(fromDate.getTime()) || !d || isNaN(d.getTime()))
-                ? (!filters.fromDate || log.date >= filters.fromDate)
-                : (d.getTime() >= fromDate.getTime());
-
-            const isBeforeTo = (!toDate || isNaN(toDate.getTime()) || !d || isNaN(d.getTime()))
-                ? (!filters.toDate || log.date <= filters.toDate)
-                : (d.getTime() <= toDate.getTime());
-
-            if (!isAfterFrom) return false;
-            if (!isBeforeTo) return false;
+            if (filters.fromDate && log.date < filters.fromDate) return false;
+            if (filters.toDate && log.date > filters.toDate) return false;
             if (filters.project && log.projectName !== filters.project) return false;
 
             if (filters.employeeId) {
@@ -243,18 +256,7 @@ const EmployeeLogTime = () => {
         });
 
         filteredLogs.forEach(log => {
-            let rawDate = log.date || log.Date || "Old Tasks";
-            let date = rawDate;
-
-            if (typeof date === 'string' && date !== "Old Tasks") {
-                if (date.includes('T')) {
-                    date = date.split('T')[0];
-                } else if (date.includes(' ')) {
-                    date = date.split(' ')[0];
-                }
-                date = date.trim();
-            }
-
+            const date = log.date || "Old Tasks";
             if (!grouped[date]) {
                 grouped[date] = [];
             }
@@ -265,9 +267,7 @@ const EmployeeLogTime = () => {
         const sortedDates = Object.keys(grouped).sort((a, b) => {
             if (a === "Old Tasks") return 1;
             if (b === "Old Tasks") return -1;
-            const da = parseCustomDate(a);
-            const db = parseCustomDate(b);
-            return db.getTime() - da.getTime();
+            return new Date(b) - new Date(a);
         });
 
         return { grouped, sortedDates, filteredCount: filteredLogs.length, filteredLogs };
@@ -539,9 +539,14 @@ const EmployeeLogTime = () => {
 
                                                                 {/* Description */}
                                                                 <td className="p-4">
-                                                                    <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed" title={log.description}>
-                                                                        {log.description}
-                                                                    </p>
+                                                                    <div className="flex flex-col gap-1">
+                                                                        <span className={`self-start text-[10px] font-bold px-2 py-0.5 rounded shadow-sm ${log.logType === 'Offline Task' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-blue-50 text-blue-600 border border-blue-100'}`}>
+                                                                            {log.logType === 'Offline Task' ? 'Offline Task' : 'Online Task'}
+                                                                        </span>
+                                                                        <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed" title={log.description}>
+                                                                            {log.description}
+                                                                        </p>
+                                                                    </div>
                                                                 </td>
 
                                                                 {/* Time & Duration */}

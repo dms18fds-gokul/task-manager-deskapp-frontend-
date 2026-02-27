@@ -9,6 +9,7 @@ import { API_URL } from '../../config';
 
 import ProfileModal from './ProfileModal';
 import MediaHistoryModal from './MediaHistoryModal';
+import DeleteConfirmationModal from './DeleteConfirmationModal';
 
 import CreateChannelModal from './CreateChannelModal';
 
@@ -39,6 +40,10 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
     const [showGlobalUsersModal, setShowGlobalUsersModal] = useState(false);
     const [inspectUser, setInspectUser] = useState(null);
     const [managerSelectedUser, setManagerSelectedUser] = useState(null);
+
+    // Channel Deletion
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [channelToDelete, setChannelToDelete] = useState(null);
 
     const fetchChannels = async () => {
         try {
@@ -159,6 +164,32 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
         if (newExpanded.has(id)) newExpanded.delete(id);
         else newExpanded.add(id);
         setExpandedNodes(newExpanded);
+    };
+
+    const confirmDeleteChannel = async () => {
+        if (!channelToDelete) return;
+
+        try {
+            await axios.delete(`${API_URL}/api/channels/${channelToDelete._id}`, {
+                headers: { 'x-auth-token': localStorage.getItem('token') }
+            });
+
+            // Update local state immediately
+            setChannels(prev => prev.filter(c => c._id !== channelToDelete._id));
+
+            // If the deleted channel is currently active, clear it
+            if (activeChannel?._id === channelToDelete._id) {
+                setActiveChannel(null);
+                if (onSelectChannel) onSelectChannel(null);
+                localStorage.removeItem('lastActiveChannelId');
+            }
+
+            setIsDeleteModalOpen(false);
+            setChannelToDelete(null);
+        } catch (err) {
+            console.error("Failed to delete channel", err);
+            alert(err.response?.data?.message || err.message || "Failed to delete channel");
+        }
     };
     // Use refs to access latest state in socket listeners without re-binding
     const activeChannelRef = useRef(activeChannel);
@@ -424,11 +455,24 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
                             <span className="w-[80%] truncate">
                                 {displayName}
                             </span>
-                            <span className="w-[20%] text-right pl-1 truncate">
+                            <span className="w-[20%] text-right pl-1 truncate flex items-center justify-end gap-1">
                                 {unreadCounts[channel._id] > 0 && (
                                     <span className="text-primary-400 font-bold">
                                         ({String(unreadCounts[channel._id]).padStart(2, '0')})
                                     </span>
+                                )}
+                                {channel.taskId && (user?.role?.includes('Super Admin') || user?.role?.includes('Admin')) && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setChannelToDelete(channel);
+                                            setIsDeleteModalOpen(true);
+                                        }}
+                                        className="opacity-0 group-hover:opacity-100 text-red-500/70 hover:text-red-400 p-1 rounded hover:bg-red-500/10 transition-all ml-1 shrink-0"
+                                        title="Delete Channel"
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
                                 )}
                             </span>
                         </div>
@@ -802,6 +846,13 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
 
             {/* Modals placed outside overflow container */}
             <ProfileModal isOpen={!!inspectUser} onClose={() => setInspectUser(null)} user={inspectUser} isEditable={false} />
+
+            <DeleteConfirmationModal
+                isOpen={isDeleteModalOpen}
+                onClose={() => { setIsDeleteModalOpen(false); setChannelToDelete(null); }}
+                onConfirm={confirmDeleteChannel}
+                channelName={getChannelName(channelToDelete || {})}
+            />
 
 
 

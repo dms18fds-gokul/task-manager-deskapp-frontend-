@@ -43,6 +43,21 @@ const LogTime = () => {
         return () => clearInterval(timer);
     }, [showSuccess]);
 
+    // Listener for auto-refresh when offline tasks are synced or added
+    useEffect(() => {
+        const handleOfflineUpdate = () => {
+            fetchRecentLogs();
+        };
+
+        window.addEventListener('offlineTaskSynced', handleOfflineUpdate);
+        window.addEventListener('offlineTaskAdded', handleOfflineUpdate); // If we add this event when saving offline
+
+        return () => {
+            window.removeEventListener('offlineTaskSynced', handleOfflineUpdate);
+            window.removeEventListener('offlineTaskAdded', handleOfflineUpdate);
+        };
+    }, [user]);
+
     const handleCloseSuccess = () => {
         setShowSuccess(false);
         setTimeLeft(30);
@@ -100,21 +115,60 @@ const LogTime = () => {
 
     const fetchRecentLogs = async () => {
         if (!user) return;
+
+        let serverData = [];
+        let fetchSuccess = false;
+
         try {
             const res = await fetch(`${API_URL}/work-logs/employee/${user._id}`);
             if (res.ok) {
-                const data = await res.json();
-                const sorted = data.sort((a, b) => {
-                    const dateDiff = new Date(b.date) - new Date(a.date);
-                    if (dateDiff !== 0) return dateDiff;
-                    const taskA = parseInt(a.taskNo || "0", 10);
-                    const taskB = parseInt(b.taskNo || "0", 10);
-                    return taskB - taskA;
-                });
-                setRecentLogs(sorted);
+                serverData = await res.json();
+                fetchSuccess = true;
             }
         } catch (error) {
             console.error("Error fetching logs:", error);
+        }
+
+        // Merge with offline pending tasks from localStorage
+        const offlineTasksStr = localStorage.getItem('offlineQuickTasks');
+        let pendingLogs = [];
+        if (offlineTasksStr) {
+            try {
+                const parsedTasks = JSON.parse(offlineTasksStr);
+                // Filter for current user and map to expected format
+                pendingLogs = parsedTasks
+                    .filter(t => t.employeeId === user._id)
+                    .map((t, i) => ({
+                        ...t,
+                        _id: `pending-${Date.now()}-${i}`,
+                        isPendingOffline: true,
+                        logType: "Offline Task Pending"
+                    }));
+            } catch (e) {
+                console.error("Error parsing offline tasks", e);
+            }
+        }
+
+        const applySort = (data) => {
+            return [...data].sort((a, b) => {
+                const dateDiff = new Date(b.date) - new Date(a.date);
+                if (dateDiff !== 0) return dateDiff;
+                const taskA = parseInt(a.taskNo || "0", 10);
+                const taskB = parseInt(b.taskNo || "0", 10);
+                return taskB - taskA;
+            });
+        };
+
+        if (fetchSuccess) {
+            const combinedData = [...serverData, ...pendingLogs];
+            setRecentLogs(applySort(combinedData));
+        } else {
+            // Apply to existing state if offline to ensure immediate UI feedback
+            setRecentLogs(prevLogs => {
+                const prevServerData = prevLogs.filter(log => !log.isPendingOffline);
+                const combinedData = [...prevServerData, ...pendingLogs];
+                return applySort(combinedData);
+            });
         }
     };
 
@@ -352,41 +406,10 @@ const LogTime = () => {
         }
     };
 
-    const parseCustomDate = (dateString) => {
-        if (!dateString) return null;
-        const str = String(dateString).trim();
-        if (str.includes('T') || str.includes(':')) {
-            return new Date(str);
-        }
-        const parts = str.split(/[\.\-\/]/);
-        if (parts.length === 3) {
-            if (parts[0].length === 4) {
-                return new Date(str);
-            }
-            const day = parseInt(parts[0], 10);
-            const month = parseInt(parts[1], 10) - 1;
-            const year = parseInt(parts[2], 10);
-            return new Date(year, month, day);
-        }
-        return new Date(str);
-    };
-
     const filteredLogs = recentLogs.filter(log => {
-        const d = parseCustomDate(log.date || log.Date);
-        const fromDate = parseCustomDate(filters.fromDate);
-        const toDate = parseCustomDate(filters.toDate);
-
-        // Filter valid parsed dates, fall back to string logic if NaN
-        const isAfterFrom = (!fromDate || isNaN(fromDate.getTime()) || !d || isNaN(d.getTime()))
-            ? (!filters.fromDate || log.date >= filters.fromDate)
-            : (d.getTime() >= fromDate.getTime());
-
-        const isBeforeTo = (!toDate || isNaN(toDate.getTime()) || !d || isNaN(d.getTime()))
-            ? (!filters.toDate || log.date <= filters.toDate)
-            : (d.getTime() <= toDate.getTime());
-
         return (
-            isAfterFrom && isBeforeTo &&
+            (!filters.fromDate || log.date >= filters.fromDate) &&
+            (!filters.toDate || log.date <= filters.toDate) &&
             (!filters.projectName || log.projectName === filters.projectName) &&
             (!filters.taskOwner || log.taskOwner === filters.taskOwner) &&
             (!filters.taskType || log.taskType === filters.taskType) &&
@@ -418,19 +441,7 @@ const LogTime = () => {
     };
 
     const groupedLogs = filteredLogs.reduce((groups, log) => {
-        let rawDate = log.date || log.Date || "Old Tasks";
-        let date = rawDate;
-
-        if (typeof date === 'string' && date !== "Old Tasks") {
-            if (date.includes('T')) {
-                date = date.split('T')[0];
-            } else if (date.includes(' ')) {
-                date = date.split(' ')[0];
-            }
-            // Strip any remaining whitespace
-            date = date.trim();
-        }
-
+        const date = log.date;
         if (!groups[date]) {
             groups[date] = [];
         }
@@ -439,13 +450,7 @@ const LogTime = () => {
     }, {});
 
     // Sort dates descending for display
-    const sortedDates = Object.keys(groupedLogs).sort((a, b) => {
-        if (a === "Old Tasks") return 1;
-        if (b === "Old Tasks") return -1;
-        const da = parseCustomDate(a);
-        const db = parseCustomDate(b);
-        return db.getTime() - da.getTime();
-    });
+    const sortedDates = Object.keys(groupedLogs).sort((a, b) => new Date(b) - new Date(a));
 
     // Action Popup Handler
     const handleActionClick = (log, index) => {
@@ -771,9 +776,19 @@ const LogTime = () => {
 
                                                                     {/* Description */}
                                                                     <td className="p-4">
-                                                                        <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed" title={log.description}>
-                                                                            {log.description}
-                                                                        </p>
+                                                                        <div className="flex flex-col gap-1">
+                                                                            <span className={`self-start text-[10px] font-bold px-2 py-0.5 rounded shadow-sm ${log.isPendingOffline
+                                                                                ? 'bg-gray-100 text-gray-500 border border-gray-200 animate-pulse'
+                                                                                : log.logType === 'Offline Task'
+                                                                                    ? 'bg-amber-100 text-amber-700 border border-amber-200'
+                                                                                    : 'bg-blue-50 text-blue-600 border border-blue-100'
+                                                                                }`}>
+                                                                                {log.isPendingOffline ? 'Offline Task Pending' : log.logType === 'Offline Task' ? 'Offline Task' : 'Online Task'}
+                                                                            </span>
+                                                                            <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed" title={log.description}>
+                                                                                {log.description}
+                                                                            </p>
+                                                                        </div>
                                                                     </td>
 
                                                                     {/* Time & Duration */}

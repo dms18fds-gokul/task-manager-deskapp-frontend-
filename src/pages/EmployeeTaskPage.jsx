@@ -233,14 +233,66 @@ const EmployeeTaskPage = () => {
     };
 
     const fetchMyTasks = async (userId) => {
+        let serverData = [];
+        let fetchSuccess = false;
         try {
             const res = await fetch(`${API_URL}/tasks/my-tasks?userId=${userId}`);
             if (res.ok) {
-                const data = await res.json();
-                setMyTasks(data);
+                serverData = await res.json();
+                fetchSuccess = true;
             }
         } catch (error) {
             console.error("Failed to fetch my tasks", error);
+        }
+
+        // Merge with offline pending tasks from localStorage
+        const offlineTasksStr = localStorage.getItem('offlineQuickTasks');
+        let pendingLogs = [];
+        if (offlineTasksStr) {
+            try {
+                const parsedTasks = JSON.parse(offlineTasksStr);
+                pendingLogs = parsedTasks
+                    .filter(t => t.employeeId === userId)
+                    .map((t, i) => ({
+                        ...t,
+                        _id: `pending-${Date.now()}-${i}`,
+                        isPendingOffline: true,
+                        logType: "Offline Task Pending"
+                    }));
+            } catch (e) {
+                console.error("Error parsing offline tasks", e);
+            }
+        }
+
+        // Merge with offline pending assignments from localStorage
+        const offlineAssignmentsStr = localStorage.getItem('offlineAssignments');
+        let pendingAssignments = [];
+        if (offlineAssignmentsStr) {
+            try {
+                const parsedAssignments = JSON.parse(offlineAssignmentsStr);
+                pendingAssignments = parsedAssignments
+                    .filter(a => Array.isArray(a.assignee) && a.assignee.includes(userId)) // Only show if assigned to this user
+                    .map((a, i) => ({
+                        ...a,
+                        _id: `pending-assign-${Date.now()}-${i}`,
+                        isPendingOffline: true,
+                        logType: "Offline Task Pending",
+                        status: "Pending"
+                    }));
+            } catch (e) {
+                console.error("Error parsing offline assignments", e);
+            }
+        }
+
+        if (fetchSuccess) {
+            const combinedData = [...pendingLogs, ...pendingAssignments, ...serverData];
+            setMyTasks(combinedData);
+        } else {
+            setMyTasks(prev => {
+                const prevServerData = prev.filter(t => !t.isPendingOffline);
+                const combinedData = [...pendingLogs, ...pendingAssignments, ...prevServerData];
+                return combinedData;
+            });
         }
     };
 
@@ -250,6 +302,27 @@ const EmployeeTaskPage = () => {
             fetchInvitations(user._id);
             fetchMyTasks(user._id);
         }
+    }, [user]);
+
+    // Listener for auto-refresh when offline tasks are synced or added
+    useEffect(() => {
+        const handleOfflineUpdate = () => {
+            if (user && user._id) {
+                fetchMyTasks(user._id);
+            }
+        };
+
+        window.addEventListener('offlineTaskSynced', handleOfflineUpdate);
+        window.addEventListener('offlineTaskAdded', handleOfflineUpdate);
+        window.addEventListener('offlineAssignmentSynced', handleOfflineUpdate);
+        window.addEventListener('offlineAssignmentAdded', handleOfflineUpdate);
+
+        return () => {
+            window.removeEventListener('offlineTaskSynced', handleOfflineUpdate);
+            window.removeEventListener('offlineTaskAdded', handleOfflineUpdate);
+            window.removeEventListener('offlineAssignmentSynced', handleOfflineUpdate);
+            window.removeEventListener('offlineAssignmentAdded', handleOfflineUpdate);
+        };
     }, [user]);
 
     const [showLogForm, setShowLogForm] = useState(false);
@@ -968,8 +1041,20 @@ const EmployeeTaskPage = () => {
                                             </td>
 
                                             {/* Title Name */}
-                                            <td className="px-6 py-4 text-sm font-medium text-gray-600 truncate align-middle" title={task.taskTitle}>
-                                                {task.taskTitle}
+                                            <td className="px-6 py-4 align-middle">
+                                                <div className="flex flex-col gap-1">
+                                                    <span className={`self-start text-[10px] font-bold px-2 py-0.5 rounded shadow-sm ${task.isPendingOffline
+                                                        ? 'bg-gray-100 text-gray-500 border border-gray-200 animate-pulse'
+                                                        : task.logType === 'Offline Task'
+                                                            ? 'bg-amber-100 text-amber-700 border border-amber-200'
+                                                            : 'bg-blue-50 text-blue-600 border border-blue-100'
+                                                        }`}>
+                                                        {task.isPendingOffline ? 'Offline Task Pending' : task.logType === 'Offline Task' ? 'Offline Task' : 'Online Task'}
+                                                    </span>
+                                                    <span className="text-sm font-medium text-gray-600 truncate" title={task.taskTitle}>
+                                                        {task.taskTitle}
+                                                    </span>
+                                                </div>
                                             </td>
 
                                             {/* Priority */}

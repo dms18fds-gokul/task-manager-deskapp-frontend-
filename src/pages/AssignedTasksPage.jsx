@@ -101,20 +101,72 @@ const AssignedTasksPage = () => { // Renamed Component
             if (!userStr) return;
             const user = JSON.parse(userStr);
 
-            const res = await fetch(`${API_URL}/tasks/assigned-by/${user.id}`);
-            if (res.ok) {
-                const data = await res.json();
-                setAllTasks(data);
-                setFilteredTasks(data); // Initially show all
+            let serverData = [];
+            let fetchSuccess = false;
+
+            try {
+                const res = await fetch(`${API_URL}/tasks/assigned-by/${user.id}`);
+                if (res.ok) {
+                    serverData = await res.json();
+                    fetchSuccess = true;
+                }
+            } catch (err) {
+                console.error("Failed to fetch tasks from server", err);
             }
+
+            // Merge with offline pending assignments from localStorage
+            const offlineAssignmentsStr = localStorage.getItem('offlineAssignments');
+            let pendingAssignments = [];
+            if (offlineAssignmentsStr) {
+                try {
+                    const parsedAssignments = JSON.parse(offlineAssignmentsStr);
+                    pendingAssignments = parsedAssignments
+                        .filter(a => a.assignedBy === user.id) // Only show tasks assigned by this user
+                        .map((a, i) => ({
+                            ...a,
+                            _id: `pending-assign-${Date.now()}-${i}`,
+                            isPendingOffline: true,
+                            logType: "Offline Task Pending",
+                            status: "Pending"
+                        }));
+                } catch (e) {
+                    console.error("Error parsing offline assignments", e);
+                }
+            }
+
+            if (fetchSuccess) {
+                const combinedData = [...pendingAssignments, ...serverData];
+                setAllTasks(combinedData);
+                setFilteredTasks(combinedData); // Initially show all
+            } else {
+                setAllTasks(prev => {
+                    const prevServerData = prev.filter(t => !t.isPendingOffline);
+                    const combinedData = [...pendingAssignments, ...prevServerData];
+                    setFilteredTasks(combinedData);
+                    return combinedData;
+                });
+            }
+
         } catch (err) {
-            console.error("Failed to fetch tasks", err);
+            console.error("Error in fetchAllTasks", err);
         }
     };
 
     // Initial Fetch of Tasks
     useEffect(() => {
         fetchAllTasks();
+
+        const handleOfflineUpdate = () => {
+            fetchAllTasks();
+        };
+
+        window.addEventListener('offlineAssignmentSynced', handleOfflineUpdate);
+        window.addEventListener('offlineAssignmentAdded', handleOfflineUpdate);
+
+        return () => {
+            window.removeEventListener('offlineAssignmentSynced', handleOfflineUpdate);
+            window.removeEventListener('offlineAssignmentAdded', handleOfflineUpdate);
+        };
     }, []);
 
 

@@ -108,6 +108,155 @@ const App = () => {
     };
   }, [socket]);
 
+  // 3. Global Synchronization for Offline Quick Tasks
+  useEffect(() => {
+    const syncOfflineTasks = async () => {
+      if (!navigator.onLine) return;
+
+      const offlineTasksStr = localStorage.getItem('offlineQuickTasks');
+      if (!offlineTasksStr) return;
+
+      let offlineTasks = [];
+      try {
+        offlineTasks = JSON.parse(offlineTasksStr);
+      } catch (e) {
+        console.error("Failed to parse offline tasks", e);
+        return;
+      }
+
+      if (offlineTasks.length === 0) return;
+
+      console.log(`Attempting to sync ${offlineTasks.length} offline tasks...`);
+
+      const remainingTasks = [];
+      for (const task of offlineTasks) {
+        try {
+          const res = await fetch(`${API_URL}/work-logs`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(task)
+          });
+
+          if (!res.ok) {
+            console.error("Failed to sync task:", task, await res.text());
+            remainingTasks.push(task); // Keep it to try again later
+          } else {
+            console.log("Successfully synced offline task:", task.taskTitle);
+          }
+        } catch (error) {
+          console.error("Error during offline task sync:", error);
+          remainingTasks.push(task); // Keep it if network fails mid-sync
+        }
+      }
+
+      // Update local storage with whatever is left (if any failed)
+      if (remainingTasks.length > 0) {
+        localStorage.setItem('offlineQuickTasks', JSON.stringify(remainingTasks));
+      } else {
+        localStorage.removeItem('offlineQuickTasks');
+      }
+
+      // Notify other components that sync has occurred
+      window.dispatchEvent(new Event('offlineTaskSynced'));
+    };
+
+    // Attempt sync immediately on mount (if online)
+    syncOfflineTasks();
+
+    // Listen for connection restored event
+    window.addEventListener('online', syncOfflineTasks);
+
+    // --- Sync Offline Assignments ---
+    const syncOfflineAssignments = async () => {
+      if (!navigator.onLine) return;
+
+      const offlineAssignmentsStr = localStorage.getItem('offlineAssignments');
+      if (!offlineAssignmentsStr) return;
+
+      let offlineAssignments = [];
+      try {
+        offlineAssignments = JSON.parse(offlineAssignmentsStr);
+      } catch (e) {
+        console.error("Failed to parse offline assignments", e);
+        return;
+      }
+
+      if (offlineAssignments.length === 0) return;
+
+      console.log(`Attempting to sync ${offlineAssignments.length} offline assignments...`);
+
+      // Helper to convert Base64 back to Blob/File
+      const base64ToFile = async (base64Data, filename, mimeType) => {
+        const res = await fetch(base64Data);
+        const blob = await res.blob();
+        return new File([blob], filename, { type: mimeType });
+      };
+
+      const remainingAssignments = [];
+      for (const assignment of offlineAssignments) {
+        try {
+          const payload = new FormData();
+
+          // Append all normal fields
+          Object.keys(assignment).forEach(key => {
+            if (key === 'documentsData' || key === 'audioFileData') return; // Skip base64 data keys
+
+            if (key === 'roles' || key === 'assignee' || key === 'department' || key === 'projectLead') {
+              // explicit handling for assignee based on type?
+              // If assignType is overall, assignee is empty.
+              const val = (key === 'assignee' && assignment.assignType === 'Overall') ? [] : assignment[key];
+              payload.append(key, JSON.stringify(val));
+            } else if (assignment[key] !== null && assignment[key] !== undefined) {
+              payload.append(key, assignment[key]);
+            }
+          });
+
+          // Reconstruct and append files
+          if (assignment.documentsData) {
+            const file = await base64ToFile(assignment.documentsData.base64, assignment.documentsData.name, assignment.documentsData.type);
+            payload.append('documents', file);
+          }
+
+          if (assignment.audioFileData) {
+            const file = await base64ToFile(assignment.audioFileData.base64, assignment.audioFileData.name, assignment.audioFileData.type);
+            payload.append('audioFile', file);
+          }
+
+          const res = await fetch(`${API_URL}/tasks`, {
+            method: "POST",
+            body: payload,
+          });
+
+          if (!res.ok) {
+            console.error("Failed to sync assignment:", assignment.taskTitle, await res.text());
+            remainingAssignments.push(assignment);
+          } else {
+            console.log("Successfully synced offline assignment:", assignment.taskTitle);
+          }
+        } catch (error) {
+          console.error("Error during offline assignment sync:", error);
+          remainingAssignments.push(assignment);
+        }
+      }
+
+      if (remainingAssignments.length > 0) {
+        localStorage.setItem('offlineAssignments', JSON.stringify(remainingAssignments));
+      } else {
+        localStorage.removeItem('offlineAssignments');
+      }
+
+      window.dispatchEvent(new Event('offlineAssignmentSynced'));
+    };
+
+    syncOfflineAssignments();
+    window.addEventListener('online', syncOfflineAssignments);
+
+    return () => {
+      window.removeEventListener('online', syncOfflineTasks);
+      window.removeEventListener('online', syncOfflineAssignments);
+    };
+  }, []);
+
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/login" />} />

@@ -14,6 +14,20 @@ const getCurrentTime = () => {
 const QuickTaskForm = ({ user, onClose, onSuccess }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
+    const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
+    useEffect(() => {
+        const handleOnline = () => setIsOffline(false);
+        const handleOffline = () => setIsOffline(true);
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, []);
 
     // Success Modal State
     const [showSuccess, setShowSuccess] = useState(false);
@@ -153,6 +167,35 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
     };
 
     const handleAddNew = async (newValue, category) => {
+        if (!newValue.trim()) return;
+
+        // Helper to prevent duplicates in state
+        const addUnique = (prev, newOpt) => {
+            const exists = prev.some(p =>
+                (p._id && newOpt._id && p._id === newOpt._id) ||
+                (p.value === newOpt.value)
+            );
+            return exists ? prev : [...prev, newOpt];
+        };
+
+        if (isOffline) {
+            const option = { _id: `offline-${Date.now()}`, value: newValue, category };
+            if (category === 'Project') {
+                setProjects(prev => addUnique(prev, option));
+                handleDataChange('projectName', [...(Array.isArray(formData.projectName) ? formData.projectName : []), option.value]);
+            } else if (category === 'Owner') {
+                setOwners(prev => addUnique(prev, option));
+                handleDataChange('taskOwner', [...(Array.isArray(formData.taskOwner) ? formData.taskOwner : []), option.value]);
+            } else if (category === 'Type') {
+                setTypes(prev => addUnique(prev, option));
+                handleDataChange('taskType', [...(Array.isArray(formData.taskType) ? formData.taskType : []), option.value]);
+            } else if (category === 'AssignedBy') {
+                setAssignedByOptions(prev => addUnique(prev, option));
+                handleDataChange('assignedBy', [...(Array.isArray(formData.assignedBy) ? formData.assignedBy : []), option.value]);
+            }
+            return;
+        }
+
         try {
             const token = localStorage.getItem('token');
             const res = await fetch(`${API_URL}/options`, {
@@ -166,16 +209,6 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
 
             if (res.ok) {
                 const option = await res.json();
-
-                // Helper to prevent duplicates in state
-                const addUnique = (prev, newOpt) => {
-                    // Check by ID or Value to be safe
-                    const exists = prev.some(p =>
-                        (p._id && newOpt._id && p._id === newOpt._id) ||
-                        (p.value === newOpt.value)
-                    );
-                    return exists ? prev : [...prev, newOpt];
-                };
 
                 if (category === 'Project') {
                     setProjects(prev => addUnique(prev, option));
@@ -295,9 +328,23 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
             duration: formData.timeAutomation,
             status: formData.status,
             taskTitle: Array.isArray(formData.projectName) ? formData.projectName.join(", ") : formData.projectName,
-            logType: "Quick",
+            logType: isOffline ? "Offline Task" : "Quick",
             assignedBy: Array.isArray(formData.assignedBy) ? formData.assignedBy.join(", ") : formData.assignedBy // Save as string
         };
+
+        if (isOffline) {
+            payload.offlineCreatedAt = new Date().toISOString();
+            const offlineTasks = JSON.parse(localStorage.getItem('offlineQuickTasks') || '[]');
+            offlineTasks.push(payload);
+            localStorage.setItem('offlineQuickTasks', JSON.stringify(offlineTasks));
+
+            // Notify components to update their lists
+            window.dispatchEvent(new Event('offlineTaskAdded'));
+
+            setShowSuccess(true);
+            setLoading(false);
+            return;
+        }
 
         try {
             const res = await fetch(`${API_URL}/work-logs`, {
@@ -333,6 +380,11 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 scrollbar-hide">
+                {isOffline && (
+                    <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-4 flex items-center text-sm shadow-sm font-medium">
+                        <span className="font-bold mr-2">Offline Mode:</span> You are currently offline. Tasks will be saved locally and synchronized when you reconnect.
+                    </div>
+                )}
                 <form onSubmit={handleSubmit} className="space-y-5">
                     <div>
                         <label className="block text-sm font-semibold text-gray-700 mb-1">Project Name</label>
@@ -524,9 +576,13 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
                         <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">
                             ✓
                         </div>
-                        <h3 className="text-2xl font-bold text-gray-800 mb-2">Task Created!</h3>
+                        <h3 className="text-2xl font-bold text-gray-800 mb-2">
+                            {isOffline ? "Saved Offline!" : "Task Created!"}
+                        </h3>
                         <p className="text-gray-500 mb-8">
-                            Your quick task has been successfully added to the system.
+                            {isOffline
+                                ? "Your task has been saved locally and will sync once you are back online."
+                                : "Your quick task has been successfully added to the system."}
                         </p>
                         <button
                             onClick={handleCloseSuccess}

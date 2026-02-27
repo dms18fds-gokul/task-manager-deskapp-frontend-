@@ -16,6 +16,33 @@ import DeleteMessageModal from './DeleteMessageModal';
 import SuccessModal from './SuccessModal';
 import { API_URL } from '../../config';
 
+const ProgressiveImage = ({ lowResSrc, highResSrc, alt, className, onClick }) => {
+    const [src, setSrc] = useState(lowResSrc || highResSrc);
+
+    useEffect(() => {
+        if (lowResSrc && highResSrc && lowResSrc !== highResSrc) {
+            const img = new Image();
+            img.src = highResSrc;
+            img.onload = () => {
+                setSrc(highResSrc);
+            };
+        }
+    }, [lowResSrc, highResSrc]);
+
+    return (
+        <img
+            src={src}
+            alt={alt}
+            className={className}
+            loading="lazy"
+            onClick={onClick}
+            style={{
+                transition: 'filter 0.5s ease-out',
+                filter: src === lowResSrc && lowResSrc !== highResSrc ? 'blur(4px)' : 'none'
+            }}
+        />
+    );
+};
 
 export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannelCreated, onChannelUpdated }) {
     const { socket } = useSocket();
@@ -585,12 +612,13 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
             const uploadRes = await axios.post(`${API_URL}/api/upload`, formData, {
                 headers: { 'x-auth-token': token, 'Content-Type': 'multipart/form-data' }
             });
-            const { fileUrl, fileName, fileType } = uploadRes.data;
+            const { fileUrl, thumbnailUrl, fileName, fileType } = uploadRes.data;
             const messageData = {
                 content: 'Attachment',
                 channelId: activeChannel._id,
                 type: fileType || file.type || 'unknown',
                 fileUrl: fileUrl,
+                thumbnailUrl: thumbnailUrl,
                 fileName: fileName || file.name
             };
             await axios.post(`${API_URL}/api/messages`, messageData, { headers: { 'x-auth-token': token } });
@@ -645,11 +673,11 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
         if (msg.type?.startsWith('image/') || msg.fileUrl?.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
             return (
                 <div className="relative group">
-                    <img
-                        src={msg.fileUrl}
+                    <ProgressiveImage
+                        lowResSrc={msg.thumbnailUrl}
+                        highResSrc={msg.fileUrl}
                         alt="Shared image"
                         className="rounded-lg max-w-full h-auto mb-1 border border-black/10 max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity bg-[#222529]"
-                        loading="lazy"
                         onClick={() => setSelectedMedia({ src: msg.fileUrl, type: 'image', fileName: msg.fileName })}
                     />
                 </div>
@@ -966,7 +994,7 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
                                 {/* Delete Channel Option */}
 
                                 {activeChannel?.isManual === true && // Strict check for manually created channels
-                                    (user?.role?.includes('Super Admin')) && (
+                                    (user?.role?.includes('Super Admin') || user?.role?.includes('Admin')) && (
                                         <div className="mt-6 px-4 pb-8 border-t border-[#202c33] pt-6">
                                             <button
                                                 onClick={handleDeleteClick}

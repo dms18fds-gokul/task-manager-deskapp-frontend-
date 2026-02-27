@@ -109,20 +109,40 @@ const TaskAssignment = () => {
 
         // Fetch Employees
         const fetchEmployees = async () => {
+            if (!navigator.onLine) {
+                const cached = localStorage.getItem('cachedAssignmentEmployees');
+                if (cached) setEmployees(JSON.parse(cached));
+                return;
+            }
             try {
                 const res = await fetch(`${API_URL}/employee/all`);
                 if (res.ok) {
                     const data = await res.json();
                     setEmployees(data);
+                    localStorage.setItem('cachedAssignmentEmployees', JSON.stringify(data));
+                } else {
+                    const cached = localStorage.getItem('cachedAssignmentEmployees');
+                    if (cached) setEmployees(JSON.parse(cached));
                 }
             } catch (err) {
                 console.error("Failed to fetch employees", err);
+                const cached = localStorage.getItem('cachedAssignmentEmployees');
+                if (cached) setEmployees(JSON.parse(cached));
             }
         };
         fetchEmployees();
 
         // Fetch Options for Departments
         const fetchOptions = async () => {
+            if (!navigator.onLine) {
+                const cached = localStorage.getItem('cachedAssignmentOptions');
+                if (cached) {
+                    const data = JSON.parse(cached);
+                    setOptions(data);
+                    if (data.department) setDepartments(data.department.map(d => d.value));
+                }
+                return;
+            }
             try {
                 const res = await fetch(`${API_URL}/options/all`);
                 if (res.ok) {
@@ -132,9 +152,23 @@ const TaskAssignment = () => {
                     if (data.department) {
                         setDepartments(data.department.map(d => d.value));
                     }
+                    localStorage.setItem('cachedAssignmentOptions', JSON.stringify(data));
+                } else {
+                    const cached = localStorage.getItem('cachedAssignmentOptions');
+                    if (cached) {
+                        const data = JSON.parse(cached);
+                        setOptions(data);
+                        if (data.department) setDepartments(data.department.map(d => d.value));
+                    }
                 }
             } catch (err) {
                 console.error("Failed to fetch options", err);
+                const cached = localStorage.getItem('cachedAssignmentOptions');
+                if (cached) {
+                    const data = JSON.parse(cached);
+                    setOptions(data);
+                    if (data.department) setDepartments(data.department.map(d => d.value));
+                }
             }
         };
         fetchOptions();
@@ -268,6 +302,93 @@ const TaskAssignment = () => {
             finalAssignee = []; // Should be empty array, not just local var
         }
 
+        // Convert File to Base64
+        const fileToBase64 = (file) => {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve({
+                    name: file.name,
+                    type: file.type,
+                    size: file.size,
+                    base64: reader.result
+                });
+                reader.onerror = error => reject(error);
+            });
+        };
+
+        // Offline Handling
+        if (!navigator.onLine) {
+            try {
+                setIsSubmitting(true);
+
+                // Prepare offline payload
+                const offlinePayload = {
+                    ...formData,
+                    offlineCreatedAt: new Date().toISOString(), // Original timestamp
+                    assignedBy: null
+                };
+
+                // Add Current User ID
+                const userStr = localStorage.getItem("user");
+                if (userStr) {
+                    const user = JSON.parse(userStr);
+                    offlinePayload.assignedBy = user._id;
+                }
+
+                // Handle Files
+                if (formData.documents instanceof File) {
+                    offlinePayload.documentsData = await fileToBase64(formData.documents);
+                    offlinePayload.documents = null; // Don't try to stringify File
+                }
+                if (formData.audioFile instanceof File || formData.audioFile instanceof Blob) {
+                    // Blobs don't always have a name, so provide a default
+                    const fileObj = formData.audioFile instanceof File ? formData.audioFile : new File([formData.audioFile], "recording.webm", { type: formData.audioFile.type });
+                    offlinePayload.audioFileData = await fileToBase64(fileObj);
+                    offlinePayload.audioFile = null;
+                }
+
+                // Save to Local Storage
+                const existingOffline = JSON.parse(localStorage.getItem('offlineAssignments')) || [];
+                existingOffline.push(offlinePayload);
+                localStorage.setItem('offlineAssignments', JSON.stringify(existingOffline));
+
+                // Dispatch global event for immediate local UI update
+                window.dispatchEvent(new Event('offlineAssignmentAdded'));
+
+                setShowSuccessModal(true);
+
+                // Reset Form (keep date/time)
+                setFormData(prev => ({
+                    projectName: "",
+                    taskTitle: "",
+                    description: "",
+                    roles: [],
+                    assignType: "Single",
+                    assignee: [],
+                    priority: "Medium",
+                    startDate: new Date().toISOString().split("T")[0],
+                    startTime: new Date().toTimeString().slice(0, 5),
+                    department: [],
+                    teamLead: "",
+                    projectLead: "",
+                    documents: null,
+                    audioFile: null
+                }));
+                setAudioUrl(null);
+                setAudioBlob(null);
+
+            } catch (error) {
+                console.error("Error saving offline assignment:", error);
+                alert("Failed to save assignment offline.");
+            } finally {
+                setIsSubmitting(false);
+            }
+            return;
+        }
+
+        // --- ONLINE FLOW ---
+
         // Use FormData API for file uploads
         const payload = new FormData();
 
@@ -379,6 +500,22 @@ const TaskAssignment = () => {
             <SuccessModal isOpen={showSuccessModal} onClose={() => setShowSuccessModal(false)} />
 
             <div className="flex-1 flex flex-col h-screen overflow-hidden">
+                {!navigator.onLine && (
+                    <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 absolute top-0 left-0 right-0 z-50 shadow-md animate-pulse">
+                        <div className="flex">
+                            <div className="flex-shrink-0">
+                                <svg className="h-5 w-5 text-yellow-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                </svg>
+                            </div>
+                            <div className="ml-3">
+                                <p className="text-sm text-yellow-700 font-semibold">
+                                    Offline Mode: You are currently offline. Task assignments will be saved locally and synchronized when you reconnect.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
                 {/* Header */}
                 <header className="bg-white shadow-sm p-4 flex justify-between items-center md:hidden z-10">
                     <h1 className="text-xl font-bold text-gray-800">Task Manager</h1>
