@@ -7,6 +7,7 @@ import { FaSearch, FaFilter, FaEdit, FaTrash, FaCheck, FaTimes, FaEye, FaPlus, F
 import TaskDetailsModal from "../components/TaskDetailsModal";
 import CustomDropdown from "../components/CustomDropdown";
 import DownloadDropdown from "../components/DownloadDropdown";
+import TableLoader from "../components/TableLoader";
 
 import { API_URL, getSocketUrl } from "../utils/config";
 
@@ -17,9 +18,21 @@ const AdminTasksPage = () => {
     const [allTasks, setAllTasks] = useState([]); // Store all tasks
     const [filteredTasks, setFilteredTasks] = useState([]); // Store displayed tasks
     const [notification, setNotification] = useState(null);
+    const [isTableLoading, setIsTableLoading] = useState(false);
 
     // Filter State
+    const todayDate = new Date().toLocaleDateString('en-CA');
+
     const [filters, setFilters] = useState({
+        projectName: "",
+        assignedTo: "",
+        priority: "",
+        fromDate: "",
+        toDate: "",
+        status: ""
+    });
+
+    const [appliedFilters, setAppliedFilters] = useState({
         projectName: "",
         assignedTo: "",
         priority: "",
@@ -30,6 +43,10 @@ const AdminTasksPage = () => {
 
     const [selectedTaskForDetails, setSelectedTaskForDetails] = useState(null);
     const [openTaskDropdownId, setOpenTaskDropdownId] = useState(null);
+
+    const [employeeSearch, setEmployeeSearch] = useState("");
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+    const searchWrapperRef = React.useRef(null);
 
     useEffect(() => {
         // Fetch Employees
@@ -78,7 +95,17 @@ const AdminTasksPage = () => {
             // Let's do BOTH: Update state instantly (optimistic) then fetch (consistency).
         });
 
-        return () => socket.disconnect();
+        const handleClickOutside = (event) => {
+            if (searchWrapperRef.current && !searchWrapperRef.current.contains(event.target)) {
+                setIsDropdownOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+
+        return () => {
+            socket.disconnect();
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
     }, []); // Run once on mount
 
     const fetchAllTasks = async () => {
@@ -195,87 +222,102 @@ const AdminTasksPage = () => {
     useEffect(() => {
         let result = allTasks;
 
-        if (filters.projectName) {
-            result = result.filter(task => task.projectName === filters.projectName);
+        const filterFromDate = appliedFilters.fromDate || todayDate;
+        const filterToDate = appliedFilters.toDate || todayDate;
+
+        result = result.filter(task => {
+            const taskDate = task.startDate?.includes('T') ? task.startDate.split('T')[0] : task.startDate;
+            return taskDate >= filterFromDate && taskDate <= filterToDate;
+        });
+
+        if (appliedFilters.projectName) {
+            result = result.filter(task => task.projectName === appliedFilters.projectName);
         }
-        if (filters.assignedTo) {
+        if (appliedFilters.assignedTo) {
             result = result.filter(task => {
                 if (Array.isArray(task.assignedTo)) {
-                    return task.assignedTo.includes(filters.assignedTo);
+                    return task.assignedTo.includes(appliedFilters.assignedTo);
                 }
-                return task.assignedTo === filters.assignedTo;
+                return task.assignedTo === appliedFilters.assignedTo;
             });
         }
-        if (filters.priority) {
-            result = result.filter(task => task.priority === filters.priority);
+        if (appliedFilters.priority) {
+            result = result.filter(task => task.priority === appliedFilters.priority);
         }
-        if (filters.fromDate) {
-            result = result.filter(task => task.startDate >= filters.fromDate);
-        }
-        if (filters.toDate) {
-            result = result.filter(task => task.startDate <= filters.toDate);
-        }
-        if (filters.status) {
-            result = result.filter(task => task.status === filters.status);
+        if (appliedFilters.status) {
+            result = result.filter(task => task.status === appliedFilters.status);
         }
 
         setFilteredTasks(result);
-    }, [allTasks, filters]);
+    }, [allTasks, appliedFilters]);
 
-    // Group Tasks Logic
-    const getGroupedTasks = () => {
-        const today = new Date();
-        const todayStr = today.toISOString().split("T")[0];
-
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toISOString().split("T")[0];
-
-        const lastWeek = new Date(today);
-        lastWeek.setDate(lastWeek.getDate() - 7);
-        const lastWeekStr = lastWeek.toISOString().split("T")[0];
-
-        const grouped = {
-            "Today": [],
-            "Yesterday": [],
-            "Last Week": [],
-            "Old Tasks": []
+    const getDateLabel = (dateStr) => {
+        if (!dateStr) return "No Date";
+        const getLocalDateString = (d) => {
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
         };
 
-        filteredTasks.forEach(task => {
-            if (!task.startDate) {
-                grouped["Old Tasks"].push(task);
-                return;
-            }
-            const dateStr = task.startDate; // Assuming YYYY-MM-DD string match
+        const today = getLocalDateString(new Date());
+        const yesterdayDate = new Date();
+        yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+        const yesterday = getLocalDateString(yesterdayDate);
 
-            if (dateStr === todayStr) {
-                grouped["Today"].push(task);
-            } else if (dateStr === yesterdayStr) {
-                grouped["Yesterday"].push(task);
-            } else if (dateStr >= lastWeekStr && dateStr < todayStr) {
-                grouped["Last Week"].push(task);
-            } else {
-                grouped["Old Tasks"].push(task);
-            }
-        });
+        const taskDateStr = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
 
-        return grouped;
+        if (taskDateStr === today) return "TODAY";
+        if (taskDateStr === yesterday) return "YESTERDAY";
+
+        if (taskDateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            const [y, m, d] = taskDateStr.split('-');
+            return `${d}-${m}-${y}`;
+        }
+        return taskDateStr;
     };
 
-    const groupedTasks = getGroupedTasks();
+    const getUniqueEmployeeCount = (tasks) => {
+        const uniqueEmps = new Set();
+        tasks.forEach(task => {
+            let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : (task.assignee || []);
+            if (Array.isArray(targets)) {
+                targets.forEach(item => {
+                    const id = typeof item === 'object' && item !== null ? (item._id || item.id) : item;
+                    if (id) uniqueEmps.add(id);
+                });
+            } else if (targets) {
+                const id = typeof targets === 'object' ? (targets._id || targets.id) : targets;
+                if (id) uniqueEmps.add(id);
+            }
+        });
+        return uniqueEmps.size;
+    };
+
+    const sortedTasks = [...filteredTasks].sort((a, b) => new Date(b.startDate) - new Date(a.startDate));
+
+    const groupedTasks = sortedTasks.reduce((groups, task) => {
+        const label = getDateLabel(task.startDate);
+        if (!groups[label]) groups[label] = [];
+        groups[label].push(task);
+        return groups;
+    }, {});
 
     // Unique Values for Dropdowns
     const uniqueProjects = [...new Set(allTasks.map(t => t.projectName).filter(Boolean))];
     const uniquePriorities = ["High", "Medium", "Low"];
-    const uniqueStatuses = ["In Progress", "Completed", "Hold"];
+    const uniqueStatuses = ["In Progress", "Completed", "Hold", "Pending"];
 
     // Helper to resolve assignee names
-    const getAssigneeNames = (assignees) => {
-        if (!Array.isArray(assignees)) return "Unknown";
-        if (assignees.length === 0) return "Unassigned";
+    const getAssigneeNames = (task) => {
+        let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
+        if (!Array.isArray(targets)) return "Unknown";
+        if (targets.length === 0) {
+            return task.assignType === "Overall" ? "Overall (All)" : "Unassigned";
+        }
 
-        return assignees.map(id => {
+        return targets.map(id => {
+            if (typeof id === 'object' && id.name) return id.name;
             const emp = employees.find(e => e._id === id);
             return emp ? emp.name : id; // Return name if found, else original ID (e.g. "Designer")
         }).join(", ");
@@ -289,7 +331,7 @@ const AdminTasksPage = () => {
     const downloadColumns = [
         { header: "Project Name", accessor: "projectName" },
         { header: "Task Title", accessor: "taskTitle" },
-        { header: "Assigned To", accessor: (item) => getAssigneeNames(item.assignedTo) },
+        { header: "Employee Profile", accessor: (item) => getAssigneeNames(item) },
         { header: "Priority", accessor: "priority" },
         { header: "Start Date", accessor: "startDate" },
         { header: "Status", accessor: "status" }
@@ -318,12 +360,12 @@ const AdminTasksPage = () => {
     };
 
     return (
-        <div className="flex min-h-screen bg-gray-50 font-sans">
+        <div className="flex h-screen overflow-hidden bg-gray-50 font-sans">
             <Sidebar className="hidden md:flex" />
 
-            <div className="flex-1 flex flex-col p-8 overflow-y-auto">
+            <div className="flex-1 min-w-0 flex flex-col h-full p-4 sm:p-6 lg:p-8 overflow-y-auto">
                 {/* Header / Selection */}
-                <div className="flex justify-between items-center mb-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                     <h1 className="text-3xl font-bold text-gray-800">Employee Task Monitor</h1>
                     <DownloadDropdown
                         data={filteredTasks} // Use filteredTasks here
@@ -333,82 +375,169 @@ const AdminTasksPage = () => {
                 </div>
 
                 {/* Filter Navbar */}
-                <div className="bg-white rounded-xl shadow-sm p-4 mb-6 flex flex-wrap items-end gap-4 border border-gray-100">
-                    {/* From Date */}
-                    <div className="flex-1 min-w-[150px]">
-                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">From Date</label>
-                        <div className="relative">
-                            <input
-                                type="date"
-                                value={filters.fromDate}
-                                onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })}
-                                className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 hover:bg-white text-gray-700 font-medium"
+                <div className="p-5 bg-white border border-gray-100 flex flex-col gap-5 shadow-sm rounded-xl mb-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
+                        {/* From Date */}
+                        <div className="flex flex-col gap-1.5">
+                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">From Date</label>
+                            <div className="relative">
+                                <input
+                                    type="date"
+                                    value={filters.fromDate}
+                                    max={filters.toDate || undefined}
+                                    onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })}
+                                    className="w-full h-[38px] px-3 py-2 pl-9 rounded text-[13px] border border-gray-200 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-medium cursor-pointer placeholder:text-gray-400 bg-gray-50"
+                                />
+                                <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                            </div>
+                        </div>
+
+                        {/* To Date */}
+                        <div className="flex flex-col gap-1.5">
+                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">To Date</label>
+                            <div className="relative">
+                                <input
+                                    type="date"
+                                    value={filters.toDate}
+                                    min={filters.fromDate || undefined}
+                                    onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
+                                    className="w-full h-[38px] px-3 py-2 pl-9 rounded text-[13px] border border-gray-200 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-medium cursor-pointer placeholder:text-gray-400 bg-gray-50"
+                                />
+                                <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                            </div>
+                        </div>
+
+                        {/* Project Name */}
+                        <div className="flex flex-col gap-1.5">
+                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Project</label>
+                            <CustomDropdown
+                                options={[{ value: "", label: "All Projects" }, ...uniqueProjects.map(p => ({ value: p, label: p }))]}
+                                value={filters.projectName}
+                                onChange={(val) => setFilters({ ...filters, projectName: val })}
+                                placeholder="All Projects"
+                                className="border-gray-200 text-[13px] font-medium h-[38px] hover:border-gray-300 transition-colors"
+                                searchable={true}
                             />
-                            <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                        </div>
+
+                        {/* Employee Profile Filter */}
+                        <div className="flex flex-col gap-1.5 lg:col-span-1 relative" ref={searchWrapperRef}>
+                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Employee Profile</label>
+                            <div className="relative flex items-center w-full">
+                                <FaSearch className="absolute left-3 text-gray-400 text-xs" />
+                                <input
+                                    type="text"
+                                    className="w-full h-[38px] px-3 py-2 pl-8 pr-4 rounded text-[13px] border border-gray-200 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-medium bg-gray-50 placeholder:text-gray-400"
+                                    placeholder="Search Employee..."
+                                    value={employeeSearch}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        setEmployeeSearch(val);
+                                        if (val === "") {
+                                            setFilters({ ...filters, assignedTo: "" });
+                                        }
+                                        setIsDropdownOpen(true);
+                                    }}
+                                    onFocus={() => setIsDropdownOpen(true)}
+                                />
+                            </div>
+
+                            {/* Dropdown UI */}
+                            {isDropdownOpen && (
+                                <div className="absolute top-[60px] left-0 w-full bg-white border border-gray-100 rounded-xl shadow-2xl max-h-[200px] overflow-y-auto z-[999] custom-scrollbar">
+                                    {employees.filter(e => {
+                                        const query = employeeSearch.toLowerCase().trim();
+                                        if (!query) return true;
+                                        return e.name?.toLowerCase().includes(query) ||
+                                            e.employeeId?.toLowerCase().includes(query) ||
+                                            (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
+                                    }).length > 0 ? (
+                                        employees.filter(e => {
+                                            const query = employeeSearch.toLowerCase().trim();
+                                            if (!query) return true;
+                                            return e.name?.toLowerCase().includes(query) ||
+                                                e.employeeId?.toLowerCase().includes(query) ||
+                                                (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
+                                        }).map((emp, i) => (
+                                            <div
+                                                key={emp._id || i}
+                                                onClick={() => {
+                                                    setEmployeeSearch(emp.name);
+                                                    setFilters({ ...filters, assignedTo: emp._id });
+                                                    setIsDropdownOpen(false);
+                                                }}
+                                                className="p-3 px-4 border-b border-gray-50 flex items-center gap-2 cursor-pointer hover:bg-indigo-50/50 transition-colors w-full overflow-hidden"
+                                            >
+                                                <span className="font-bold text-gray-800 text-[11px] uppercase whitespace-nowrap shrink-0">{emp.name}</span>
+                                                <span className="text-gray-300 shrink-0">—</span>
+                                                <span title={Array.isArray(emp.role) ? emp.role.join(', ') : (emp.role || 'No Dept')} className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider shadow-sm truncate min-w-0">
+                                                    {Array.isArray(emp.role) ? emp.role.join(', ') : (emp.role || 'No Dept')}
+                                                </span>
+                                                <span className="text-gray-300 shrink-0">—</span>
+                                                <span className="text-gray-500 text-[10px] font-mono uppercase tracking-wider shrink-0">{emp.employeeId}</span>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="p-4 text-[11px] text-gray-500 text-center flex flex-col items-center justify-center gap-1">
+                                            <FaExclamationCircle className="text-gray-300 text-sm" />
+                                            <p>No matches found</p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Priority */}
+                        <div className="flex flex-col gap-1.5">
+                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Priority</label>
+                            <CustomDropdown
+                                options={[{ value: "", label: "All Priorities" }, ...uniquePriorities.map(p => ({ value: p, label: p }))]}
+                                value={filters.priority}
+                                onChange={(val) => setFilters({ ...filters, priority: val })}
+                                placeholder="All Priorities"
+                                className="border-gray-200 text-[13px] font-medium h-[38px] hover:border-gray-300 transition-colors"
+                            />
+                        </div>
+
+                        {/* Status */}
+                        <div className="flex flex-col gap-1.5">
+                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Status</label>
+                            <CustomDropdown
+                                options={[{ value: "", label: "All Statuses" }, ...uniqueStatuses.map(s => ({ value: s, label: s }))]}
+                                value={filters.status}
+                                onChange={(val) => setFilters({ ...filters, status: val })}
+                                placeholder="All Statuses"
+                                className="border-gray-200 text-[13px] font-medium h-[38px] hover:border-gray-300 transition-colors"
+                            />
                         </div>
                     </div>
 
-                    {/* To Date */}
-                    <div className="flex-1 min-w-[150px]">
-                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">To Date</label>
-                        <div className="relative">
-                            <input
-                                type="date"
-                                value={filters.toDate}
-                                onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
-                                className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 hover:bg-white text-gray-700 font-medium"
-                            />
-                            <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
-                        </div>
-                    </div>
-
-                    <div className="flex-1 min-w-[180px]">
-                        <CustomDropdown
-                            label="Project"
-                            options={[{ value: "", label: "All Projects" }, ...uniqueProjects.map(p => ({ value: p, label: p, icon: FaProjectDiagram }))]}
-                            value={filters.projectName}
-                            onChange={(val) => setFilters({ ...filters, projectName: val })}
-                            placeholder="All Projects"
-                        />
-                    </div>
-
-                    <div className="flex-1 min-w-[180px]">
-                        <CustomDropdown
-                            label="Assigned To"
-                            options={[{ value: "", label: "All Employees" }, ...employees.map(e => ({ value: e._id, label: e.name, icon: FaUser }))]}
-                            value={filters.assignedTo}
-                            onChange={(val) => setFilters({ ...filters, assignedTo: val })}
-                            placeholder="All Employees"
-                        />
-                    </div>
-
-                    <div className="flex-1 min-w-[150px]">
-                        <CustomDropdown
-                            label="Priority"
-                            options={[{ value: "", label: "All Priorities" }, ...uniquePriorities.map(p => ({ value: p, label: p, icon: FaExclamationCircle }))]}
-                            value={filters.priority}
-                            onChange={(val) => setFilters({ ...filters, priority: val })}
-                            placeholder="All Priorities"
-                        />
-                    </div>
-
-                    <div className="flex-1 min-w-[150px]">
-                        <CustomDropdown
-                            label="Status"
-                            options={[{ value: "", label: "All Statuses" }, ...uniqueStatuses.map(s => ({ value: s, label: s, icon: FaTasks }))]}
-                            value={filters.status}
-                            onChange={(val) => setFilters({ ...filters, status: val })}
-                            placeholder="All Statuses"
-                        />
-                    </div>
-
-                    <div className="flex-none pb-[1px]">
+                    {/* Action Buttons Row */}
+                    <div className="flex justify-end items-center gap-3 border-t border-gray-50 pt-4 mt-1">
                         <button
-                            onClick={() => setFilters({ projectName: "", assignedTo: "", priority: "", fromDate: "", toDate: "", status: "" })}
-                            className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 p-3 rounded-full transition-all shadow-sm active:scale-95 flex items-center justify-center transform hover:rotate-180 duration-500"
+                            onClick={() => {
+                                setIsTableLoading(true);
+                                const resetFilters = { projectName: "", assignedTo: "", priority: "", fromDate: "", toDate: "", status: "" };
+                                setFilters(resetFilters);
+                                setAppliedFilters(resetFilters);
+                                setEmployeeSearch("");
+                                setTimeout(() => setIsTableLoading(false), 800);
+                            }}
+                            className="bg-red-50 hover:bg-red-100 text-red-600 px-4 rounded-lg h-[38px] text-[13px] font-bold transition-all shadow-sm flex items-center justify-center transform active:scale-95 duration-200"
                             title="Reset Filters"
                         >
                             <FaRedo className="text-sm" />
+                        </button>
+                        <button
+                            onClick={() => {
+                                setIsTableLoading(true);
+                                setAppliedFilters(filters);
+                                setIsDropdownOpen(false);
+                                setTimeout(() => setIsTableLoading(false), 800);
+                            }}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 rounded-lg h-[38px] text-[13px] font-bold transition-all shadow-md flex items-center justify-center gap-2 transform active:scale-95 duration-200"
+                        >
+                            <FaSearch /> Fetch Data
                         </button>
                     </div>
                 </div>
@@ -421,7 +550,7 @@ const AdminTasksPage = () => {
                                 <FaCheckCircle size={24} />
                             </div>
                             <div>
-                                <h4 className="font-bold text-gray-800 text-lg">    ted</h4>
+                                <h4 className="font-bold text-gray-800 text-lg">Logged Out</h4>
                                 <p className="text-gray-600">{notification}</p>
                             </div>
                         </div>
@@ -436,132 +565,159 @@ const AdminTasksPage = () => {
                     </div>
                 )}
 
-                {/* Task Table */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse min-w-[1000px] table-fixed">
-                            <thead>
-                                <tr className="bg-gray-50/50 text-left border-b border-gray-200">
-                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[5%] text-center">S.No</th>
-                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%]">Assigned By & To</th>
-                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%]">Project Name</th>
-                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[20%]">Title Name</th>
-                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[10%]">Priority</th>
-                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[12%]">Status</th>
-                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[8%] text-center">Chats</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                                {filteredTasks.map((task, index) => (
-                                    <tr key={task._id}
-                                        onClick={() => setSelectedTaskForDetails(task)}
-                                        className="hover:bg-indigo-50/30 transition-all duration-200 group cursor-pointer h-20 border-l-4 border-transparent hover:border-indigo-500 bg-white"
-                                    >
-                                        {/* S.No */}
-                                        <td className="px-6 py-4 text-center text-gray-400 font-mono text-xs align-middle font-medium">
-                                            {(index + 1).toString().padStart(2, '0')}
-                                        </td>
+                {/* Task Tables Grouped by Date */}
+                <div className="mb-18">
+                    {isTableLoading ? (
+                        <TableLoader />
+                    ) : (
+                        Object.keys(groupedTasks).map((dateLabel) => {
+                            const tasksInGroup = groupedTasks[dateLabel];
+                            return (
+                                <div key={dateLabel} className="mb-8">
+                                    <h3 className="text-md font-bold text-gray-800 uppercase tracking-wider mb-4 flex items-center gap-2">
+                                        {dateLabel} <span className="text-xs font-medium text-gray-400 normal-case">({tasksInGroup.length} tasks / {getUniqueEmployeeCount(tasksInGroup)} emp)</span>
+                                    </h3>
+                                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                                        <div className="w-full overflow-x-auto custom-scrollbar">
+                                            <table className="w-full text-left border-collapse min-w-[1000px] table-fixed">
+                                                <thead>
+                                                    <tr className="bg-gray-50/50 text-left border-b border-gray-200">
+                                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[5%] text-center">S.No</th>
+                                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%] text-center">Assigned By & To</th>
+                                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%]">Project Name</th>
+                                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[25%]">Description</th>
+                                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[10%]">Priority</th>
+                                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[10%]">Status</th>
+                                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[8%] text-center">Chats</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-gray-100">
+                                                    {tasksInGroup.map((task, index) => (
+                                                        <tr key={task._id}
+                                                            onClick={() => setSelectedTaskForDetails(task)}
+                                                            className="hover:bg-indigo-50/30 transition-all duration-200 group cursor-pointer h-20 border-l-4 border-transparent hover:border-indigo-500 bg-white"
+                                                        >
+                                                            {/* S.No */}
+                                                            <td className="px-6 py-4 align-middle text-center w-[5%]">
+                                                                <div className="flex flex-col items-center justify-center gap-1.5">
+                                                                    <span className="text-gray-400 font-mono text-xs font-medium">
+                                                                        {(index + 1).toString().padStart(2, '0')}
+                                                                    </span>
+                                                                    <div
+                                                                        className={`w-2 h-2 rounded-sm shadow-sm ${task.logType === 'Offline Task' || task.isPendingOffline
+                                                                            ? 'bg-rose-500' // Red for Offline
+                                                                            : 'bg-emerald-500' // Green for Online
+                                                                            }`}
+                                                                        title={task.logType === 'Offline Task' || task.isPendingOffline ? 'Offline Task' : 'Online Task'}
+                                                                    ></div>
+                                                                </div>
+                                                            </td>
 
-                                        {/* Assigned By & To */}
-                                        <td className="px-6 py-4 align-middle">
-                                            <div className="flex flex-col gap-1.5">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[10px] uppercase font-bold text-gray-400 w-6">By:</span>
-                                                    <span className="text-xs font-bold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full truncate max-w-[120px]" title={task.assignedBy?.name}>
-                                                        {task.assignedBy?.name || "Admin"}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[10px] uppercase font-bold text-gray-400 w-6">To:</span>
-                                                    <div className="text-sm font-semibold text-indigo-900 truncate max-w-[150px]" title={(() => {
-                                                        if (!task.assignedTo || task.assignedTo.length === 0) return "Unassigned";
-                                                        return task.assignedTo.map(assigneeId => {
-                                                            // Handle both populated objects and ID strings
-                                                            if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
-                                                            const emp = employees.find(e => e._id === assigneeId);
-                                                            return emp ? emp.name : "Unknown";
-                                                        }).join(", ");
-                                                    })()}>
-                                                        {(() => {
-                                                            if (!task.assignedTo || task.assignedTo.length === 0) return <span className="text-gray-400 italic text-xs">Unassigned</span>;
-                                                            return task.assignedTo.map(assigneeId => {
-                                                                if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
-                                                                const emp = employees.find(e => e._id === assigneeId);
-                                                                return emp ? emp.name : "Unknown";
-                                                            }).join(", ");
-                                                        })()}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </td>
+                                                            {/* Assigned By & To */}
+                                                            <td className="px-6 py-4 align-middle">
+                                                                <div className="flex flex-col gap-1.5">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="text-[10px] uppercase font-bold text-gray-400 w-6">By:</span>
+                                                                        <span className="text-xs font-bold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full truncate max-w-[120px]" title={task.assignedBy?.name}>
+                                                                            {task.assignedBy?.name || "Admin"}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="text-[10px] uppercase font-bold text-gray-400 w-6">To:</span>
+                                                                        <div className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full truncate max-w-[150px]" title={(() => {
+                                                                            let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
+                                                                            if (!targets || targets.length === 0) {
+                                                                                return task.assignType === "Overall" ? "Overall (All)" : "Unassigned";
+                                                                            }
+                                                                            return targets.map(assigneeId => {
+                                                                                if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
+                                                                                const emp = employees.find(e => e._id === assigneeId);
+                                                                                return emp ? emp.name : assigneeId;
+                                                                            }).join(", ");
+                                                                        })()}>
+                                                                            {(() => {
+                                                                                let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
+                                                                                if (!targets || targets.length === 0) {
+                                                                                    return task.assignType === "Overall" ? "Overall (All)" : "Unassigned";
+                                                                                }
+                                                                                return targets.map(assigneeId => {
+                                                                                    if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
+                                                                                    const emp = employees.find(e => e._id === assigneeId);
+                                                                                    return emp ? emp.name : assigneeId;
+                                                                                }).join(", ");
+                                                                            })()}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </td>
 
-                                        {/* Project Name */}
-                                        <td className="px-6 py-4 text-sm font-bold text-gray-800 truncate align-middle" title={task.projectName}>
-                                            {task.projectName}
-                                        </td>
+                                                            {/* Project Name */}
+                                                            <td className="px-6 py-4 text-sm font-bold text-gray-800 truncate align-middle" title={task.projectName}>
+                                                                {task.projectName}
+                                                            </td>
 
-                                        {/* Title Name */}
-                                        <td className="px-6 py-4 align-middle">
-                                            <div className="flex flex-col gap-1">
-                                                <span className={`self-start text-[10px] font-bold px-2 py-0.5 rounded shadow-sm ${task.isPendingOffline
-                                                    ? 'bg-gray-100 text-gray-500 border border-gray-200 animate-pulse'
-                                                    : task.logType === 'Offline Task'
-                                                        ? 'bg-amber-100 text-amber-700 border border-amber-200'
-                                                        : 'bg-blue-50 text-blue-600 border border-blue-100'
-                                                    }`}>
-                                                    {task.isPendingOffline ? 'Offline Task Pending' : task.logType === 'Offline Task' ? 'Offline Task' : 'Online Task'}
-                                                </span>
-                                                <span className="text-sm font-medium text-gray-600 truncate" title={task.taskTitle}>
-                                                    {task.taskTitle}
-                                                </span>
-                                            </div>
-                                        </td>
+                                                            {/* Description */}
+                                                            <td className="px-6 py-4 align-middle">
+                                                                <div className="flex flex-col gap-1.5 items-start">
+                                                                    <span className="text-sm font-medium text-gray-600 truncate max-w-[300px]" title={task.description || task.taskTitle}>
+                                                                        {task.description || task.taskTitle}
+                                                                    </span>
+                                                                </div>
+                                                            </td>
 
-                                        {/* Priority */}
-                                        <td className="px-6 py-4 align-middle">
-                                            <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold shadow-sm border ${task.priority === "High" ? "bg-rose-50 text-rose-600 border-rose-100" :
-                                                task.priority === "Medium" ? "bg-amber-50 text-amber-600 border-amber-100" :
-                                                    "bg-emerald-50 text-emerald-600 border-emerald-100"
-                                                }`}>
-                                                {task.priority === "High" && <FaExclamationCircle className="mr-1.5 text-[10px]" />}
-                                                {task.priority || "Normal"}
-                                            </span>
-                                        </td>
+                                                            {/* Priority */}
+                                                            <td className="px-6 py-4 align-middle">
+                                                                <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold shadow-sm border ${task.priority === "High" ? "bg-rose-50 text-rose-600 border-rose-100" :
+                                                                    task.priority === "Medium" ? "bg-amber-50 text-amber-600 border-amber-100" :
+                                                                        "bg-emerald-50 text-emerald-600 border-emerald-100"
+                                                                    }`}>
+                                                                    {task.priority === "High" && <FaExclamationCircle className="mr-1.5 text-[10px]" />}
+                                                                    {task.priority || "Normal"}
+                                                                </span>
+                                                            </td>
 
-                                        {/* Status */}
-                                        <td className="px-6 py-4 align-middle">
-                                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold border shadow-sm ${task.status === "Completed" ? "bg-emerald-100 text-emerald-800 border-emerald-200" :
-                                                task.status === "In Progress" ? "bg-blue-100 text-blue-800 border-blue-200" :
-                                                    task.status === "Overdue" ? "bg-red-100 text-red-800 border-red-200" :
-                                                        "bg-gray-100 text-gray-800 border-gray-200"
-                                                }`}>
-                                                <span className={`w-1.5 h-1.5 rounded-full mr-2 ${task.status === "Completed" ? "bg-emerald-500" :
-                                                    task.status === "In Progress" ? "bg-blue-500" :
-                                                        task.status === "Overdue" ? "bg-red-500" :
-                                                            "bg-gray-500"
-                                                    }`}></span>
-                                                {task.status}
-                                            </span>
-                                        </td>
+                                                            {/* Status */}
+                                                            <td className="px-4 py-4 align-middle">
+                                                                <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold border shadow-sm ${task.status === "Completed" ? "bg-emerald-100 text-emerald-800 border-emerald-200" :
+                                                                    task.status === "In Progress" ? "bg-blue-100 text-blue-800 border-blue-200" :
+                                                                        task.status === "Hold" ? "bg-amber-100 text-amber-800 border-amber-200" :
+                                                                            task.status === "Overdue" ? "bg-red-100 text-red-800 border-red-200" :
+                                                                                "bg-gray-100 text-gray-800 border-gray-200"
+                                                                    }`}>
+                                                                    <span className={`w-1.5 h-1.5 rounded-full mr-2 ${task.status === "Completed" ? "bg-emerald-500" :
+                                                                        task.status === "In Progress" ? "bg-blue-500" :
+                                                                            task.status === "Hold" ? "bg-amber-500" :
+                                                                                task.status === "Overdue" ? "bg-red-500" :
+                                                                                    "bg-gray-500"
+                                                                        }`}></span>
+                                                                    {task.status}
+                                                                </span>
+                                                            </td>
 
-                                        {/* Chats */}
-                                        <td className="px-6 py-4 text-center align-middle">
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); handleChatClick(task._id); }}
-                                                className="inline-flex items-center justify-center h-9 w-9 text-indigo-500 bg-white border border-gray-200 hover:bg-indigo-50 hover:text-indigo-600 rounded-full transition-all shadow-sm hover:shadow active:scale-95 group-hover:border-indigo-200"
-                                                title="Open Chat"
-                                            >
-                                                <FaPaperPlane size={14} />
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                                                            {/* Chats */}
+                                                            <td className="px-6 py-4 text-center align-middle">
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); handleChatClick(task._id); }}
+                                                                    className="inline-flex items-center justify-center h-9 w-9 text-indigo-500 bg-white border border-gray-200 hover:bg-indigo-50 hover:text-indigo-600 rounded-full transition-all shadow-sm hover:shadow active:scale-95 group-hover:border-indigo-200"
+                                                                    title="Open Chat"
+                                                                >
+                                                                    <FaPaperPlane size={14} />
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })
+                    )}
                 </div>
-                {filteredTasks.length === 0 && (
-                    <div className="text-center py-16 bg-white rounded-2xl shadow-sm border border-gray-100">
+                {/* Empty State */}
+                {Object.keys(groupedTasks).length === 0 && (
+                    <div className="text-center py-16 bg-white rounded-2xl shadow-sm border border-gray-100 mb-8">
                         <div className="bg-gray-50 rounded-full h-16 w-16 flex items-center justify-center mx-auto mb-4">
                             <FaTasks className="text-gray-300 text-2xl" />
                         </div>

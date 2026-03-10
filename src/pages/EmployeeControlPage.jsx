@@ -132,7 +132,7 @@ const EmployeeControlPage = () => {
         <div className="flex h-screen bg-slate-50 font-sans">
             <Sidebar className="w-64 flex-shrink-0 hidden md:flex" />
 
-            <div className="flex-1 overflow-x-hidden overflow-y-auto">
+            <div className="flex-1 overflow-x-hidden overflow-y-auto w-full max-w-full">
                 {/* Header */}
                 <div className="bg-white border-b border-slate-200 px-8 py-6 sticky top-0 z-20">
                     <div className="flex flex-col gap-1 max-w-7xl mx-auto">
@@ -151,7 +151,7 @@ const EmployeeControlPage = () => {
                 </div>
 
                 {/* Main Content Area */}
-                <div className="p-8 max-w-7xl mx-auto">
+                <div className="p-4 sm:p-6 lg:p-8 w-full max-w-7xl mx-auto">
 
                     {error && (
                         <div className="bg-red-50 text-red-700 p-4 rounded-xl flex items-center gap-3 mb-6 border border-red-100 shadow-sm animate-in fade-in slide-in-from-top-2">
@@ -163,8 +163,8 @@ const EmployeeControlPage = () => {
                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
 
                         {/* Table Tools */}
-                        <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-white">
-                            <div className="relative w-64">
+                        <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white">
+                            <div className="relative w-full sm:w-64">
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                                 <input
                                     type="text"
@@ -180,21 +180,20 @@ const EmployeeControlPage = () => {
                         </div>
 
                         {/* Data Table */}
-                        <div className="overflow-x-auto w-full">
+                        <div className="w-full overflow-x-auto custom-scrollbar">
                             {loading ? (
                                 <div className="flex justify-center items-center py-20 text-slate-400">
                                     <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
                                 </div>
                             ) : (
-                                <table className="w-full text-left border-collapse">
+                                <table className="w-full text-left border-collapse min-w-[800px] xl:min-w-full table-fixed">
                                     <thead>
                                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] uppercase tracking-wider">
                                             <th className="px-6 py-4 font-bold">Employee ID</th>
                                             <th className="px-6 py-4 font-bold">Full Name</th>
                                             <th className="px-6 py-4 font-bold">Email Address</th>
                                             <th className="px-6 py-4 font-bold">Department</th>
-                                            <th className="px-6 py-4 font-bold">Role</th>
-                                            <th className="px-6 py-4 font-bold">Work Type</th>
+
                                             <th className="px-6 py-4 font-bold text-center">Activity</th>
                                         </tr>
                                     </thead>
@@ -223,16 +222,7 @@ const EmployeeControlPage = () => {
                                                         ))}
                                                     </div>
                                                 </td>
-                                                <td className="px-6 py-4 align-middle">
-                                                    <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-1 rounded-md">
-                                                        {emp.designation || "-"}
-                                                    </span>
-                                                </td>
-                                                <td className="px-6 py-4 align-middle">
-                                                    <span className="text-xs font-semibold text-slate-600">
-                                                        {emp.workType || "-"}
-                                                    </span>
-                                                </td>
+
                                                 <td className="px-6 py-4 align-middle text-center">
                                                     <div className="flex justify-center w-full">
                                                         <ThemeToggle

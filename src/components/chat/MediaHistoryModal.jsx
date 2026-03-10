@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Image, Film, FileText, Download, ExternalLink, Calendar, Music } from 'lucide-react';
 import axios from 'axios';
-import { API_URL } from '../../config';
+import { API_URL } from '../../utils/config';
 import MediaModal from './MediaModal';
 
 export default function MediaHistoryModal({ channel, onClose }) {
@@ -19,7 +19,7 @@ export default function MediaHistoryModal({ channel, onClose }) {
             const token = localStorage.getItem('token');
             // Assuming we have an endpoint to get all messages or a specialized media endpoint.
             // For now, we'll fetch messages and filter. Ideally, backend should support /api/channels/:id/media
-            const res = await axios.get(`${API_URL}/api/messages/${channel._id}`, {
+            const res = await axios.get(`${API_URL}/messages/${channel._id}`, {
                 headers: { 'x-auth-token': token }
             });
 

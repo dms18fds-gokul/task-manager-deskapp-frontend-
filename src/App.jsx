@@ -12,6 +12,8 @@ import LogTime from "./pages/LogTime";
 import OfficeChat from "./pages/OfficeChat"; // Import Chat Page
 import CredentialsVault from "./pages/CredentialsVault"; // Import CredentialsVault
 import EmployeeTaskAssignment from "./pages/EmployeeTaskAssignment";
+import GroupTaskAssignment from "./pages/GroupTaskAssignment";
+import EmployeeGroupTaskAssignment from "./pages/EmployeeGroupTaskAssignment";
 import AssignedTasksPage from "./pages/AssignedTasksPage"; // Import
 import RamUsage from "./pages/RamUsage";
 import DeviceRamTable from "./pages/DeviceRamTable";
@@ -21,6 +23,10 @@ import ProjectReportPage from "./pages/ProjectReportPage";
 import EmployeeControlPage from "./pages/EmployeeControlPage"; // Added Settings page Route
 import EmployeeLogsAndTaskControlPage from "./pages/EmployeeLogsAndTaskControlPage"; // New Logs/Task Control Page
 import EmployeeScreenshotControlPage from "./pages/EmployeeScreenshotControlPage"; // Screenshot Control Page
+import DocumentsApprovalPage from "./pages/DocumentsApprovalPage"; // Document Approval Page
+import DocumentApprovalsUserPage from "./pages/DocumentApprovalsUserPage"; // Document Approval Page
+import ChangePassword from "./pages/ChangePassword"; // Change Password Page
+import DiscussionNotepad from "./pages/DiscussionNotepad"; // Discussion Notepad Page
 import { Route, Routes, Navigate } from "react-router-dom";
 import { useEffect } from "react";
 import { API_URL } from "./utils/config";
@@ -72,7 +78,7 @@ const App = () => {
     }
   }, []);
 
-  // 2. Global WebSocket Listeners (e.g. for Admin remote toggles)
+  // 2. Global WebSocket Listeners (e.g. for Admin remote toggles & Download Approvals)
   useEffect(() => {
     if (!socket) return;
 
@@ -101,10 +107,53 @@ const App = () => {
       }
     };
 
+    const handleDownloadApproved = async (data) => {
+      console.log("Download Approved by Admin:", data);
+      const { fileUrl, fileName, requestId } = data;
+
+      if (fileUrl) {
+        // Programmatically trigger the download robustly
+        try {
+          // Bypassing auto-download blocker by fetching the Blob first
+          const response = await fetch(fileUrl);
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.style.display = "none";
+          a.href = url;
+          a.download = fileName || "downloaded_file";
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+          }, 100);
+        } catch (error) {
+          console.error("Auto-download failed, falling back to direct link", error);
+          window.open(fileUrl, "_blank");
+        }
+        setTimeout(() => {
+          document.body.removeChild(a);
+        }, 100);
+
+        // Optional: Show a toast/alert notifying the user of the approval
+        // alert(`Your download request for "${fileName}" has been approved!`);
+      }
+    };
+
+    const handleNewNotification = (notification) => {
+      // Optional: Could trigger a system toast/audio here if desired
+      console.log("New notification received:", notification);
+    };
+
     socket.on("screenshotActivityUpdate", handleScreenshotToggle);
+    socket.on("download_approved", handleDownloadApproved);
+    socket.on("new_notification", handleNewNotification);
 
     return () => {
       socket.off("screenshotActivityUpdate", handleScreenshotToggle);
+      socket.off("download_approved", handleDownloadApproved);
+      socket.off("new_notification", handleNewNotification);
     };
   }, [socket]);
 
@@ -265,7 +314,8 @@ const App = () => {
 
       {/* Admin Routes */}
       <Route path="/dashboard" element={<Dashboard />} />
-      <Route path="/task-assignment" element={<TaskAssignment />} />
+      <Route path="/assign-task" element={<TaskAssignment />} />
+      <Route path="/assign-group-task" element={<GroupTaskAssignment />} />
       <Route path="/admin-tasks" element={<AdminTasksPage />} />
       <Route path="/employee/add" element={<EmployeeManagement />} />
       <Route path="/employee/edit-role" element={<EmployeeManagement />} />
@@ -276,18 +326,23 @@ const App = () => {
       <Route path="/admin/settings/employee-login-control" element={<EmployeeControlPage />} />
       <Route path="/admin/settings/employee-logs-tasks" element={<EmployeeLogsAndTaskControlPage />} />
       <Route path="/admin/settings/screenshot-control" element={<EmployeeScreenshotControlPage />} />
+      <Route path="/admin/documents-approval" element={<DocumentsApprovalPage />} />
 
       {/* Employee Routes */}
       <Route path="/employee-log-time" element={<EmployeeLogTime />} />
       <Route path="/log-time" element={<LogTime />} />
       <Route path="/employee-dashboard" element={<EmployeeDashboard />} />
       <Route path="/employee-tasks" element={<EmployeeTaskPage />} />
-      <Route path="/employee-task-assignment" element={<EmployeeTaskAssignment />} />
+      <Route path="/employee/assign-task" element={<EmployeeTaskAssignment />} />
+      <Route path="/employee/assign-group-task" element={<EmployeeGroupTaskAssignment />} />
+      <Route path="/employee/document-approvals" element={<DocumentApprovalsUserPage />} />
       <Route path="/assigned-tasks" element={<AssignedTasksPage />} /> {/* Added Route */}
       <Route path="/apply-leave" element={<ApplyLeave />} />
+      <Route path="/change-password" element={<ChangePassword />} />
 
       {/* Common Routes */}
       <Route path="/credentials-vault" element={<CredentialsVault />} />
+      <Route path="/discussion-notepad" element={<DiscussionNotepad />} />
       <Route path="/admin/ram-usage" element={<RamUsage />} />
       <Route path="/admin/device-ram" element={<DeviceRamTable />} />
 

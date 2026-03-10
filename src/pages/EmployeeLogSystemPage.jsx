@@ -89,7 +89,7 @@ const EmployeeLogSystemPage = () => {
 
     if (user.qtActivity === false && user.role !== "Super Admin") {
         return (
-            <div className="flex min-h-screen bg-gray-50 font-sans">
+            <div className="flex h-screen overflow-hidden bg-gray-50 font-sans">
                 <EmployeeSidebar className="hidden md:flex" />
                 <div className="flex-1 flex flex-col justify-center items-center h-screen p-6 relative">
                     {/* Mobile Sidebar Overlay */}
@@ -114,7 +114,7 @@ const EmployeeLogSystemPage = () => {
                         </button>
                     </header>
 
-                    <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center border-t-4 border-rose-500 mt-16 md:mt-0">
+                    <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-xl max-w-md w-[90%] sm:w-full text-center border-t-4 border-rose-500 mt-16 md:mt-0">
                         <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-6">
                             <FaExclamationCircle size={32} />
                         </div>
@@ -135,7 +135,7 @@ const EmployeeLogSystemPage = () => {
     }
 
     return (
-        <div className="flex min-h-screen bg-gray-100 font-sans relative">
+        <div className="flex h-screen overflow-hidden bg-gray-100 font-sans relative">
             {/* Desktop Sidebar */}
             <EmployeeSidebar className="hidden md:flex" />
 
@@ -166,7 +166,7 @@ const EmployeeLogSystemPage = () => {
                     </button>
                 </header>
 
-                <main className="flex-1 p-6 overflow-y-auto">
+                <main className="flex-1 p-4 sm:p-6 overflow-y-auto w-full max-w-full overflow-x-hidden">
                     <div className="mb-6 flex justify-between items-start">
                         <div>
                             <h1 className="text-2xl font-bold text-gray-800">Log System</h1>
@@ -181,7 +181,7 @@ const EmployeeLogSystemPage = () => {
                     </div>
 
                     {/* Log Form */}
-                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 max-w-4xl mx-auto">
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 sm:p-8 w-full max-w-4xl mx-auto">
                         <form onSubmit={handleSubmit} className="space-y-6">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 {/* Task Title */}

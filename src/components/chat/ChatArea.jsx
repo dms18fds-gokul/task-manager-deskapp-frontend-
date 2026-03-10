@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Paperclip, Mic, Trash2, FileText, ExternalLink, Clock, Play, Square, Share2, Download, Search, X, Info, Bold, Italic, Underline, Strikethrough, Link as LinkIcon, List, ListOrdered, Code, Plus, Smile, AtSign, Video, Pause, Users, Hash, Globe, Lock } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext';
 import { useAuth } from '../../context/AuthContext';
 import axios from 'axios';
 import ProfileModal from './ProfileModal';
 import MediaModal from './MediaModal';
+import { Send, Paperclip, Mic, Trash2, FileText, ExternalLink, Clock, Play, Square, Share2, Download, Search, X, Info, Bold, Italic, Underline, Strikethrough, Link as LinkIcon, List, ListOrdered, Code, Plus, Smile, AtSign, Video, Pause, Users, Hash, Globe, Lock, Check, CheckCheck, MoreVertical, Edit2, Image as ImageIcon, Music } from 'lucide-react';
 import VideoRecordModal from './VideoRecordModal';
 import MentionSelector from './MentionSelector';
 import EmojiPicker from 'emoji-picker-react';
@@ -14,7 +14,7 @@ import CreateChannelModal from './CreateChannelModal';
 import DeleteConfirmationModal from './DeleteConfirmationModal';
 import DeleteMessageModal from './DeleteMessageModal';
 import SuccessModal from './SuccessModal';
-import { API_URL } from '../../config';
+import { API_URL, LOCAL_UPLOAD_URL } from '../../utils/config';
 
 const ProgressiveImage = ({ lowResSrc, highResSrc, alt, className, onClick }) => {
     const [src, setSrc] = useState(lowResSrc || highResSrc);
@@ -72,6 +72,8 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
     const [inspectUser, setInspectUser] = useState(null);
     const [currentTime, setCurrentTime] = useState(new Date());
     const [taskInfo, setTaskInfo] = useState(null);
+    const [editingMessageId, setEditingMessageId] = useState(null);
+    const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
 
     // Search State
     const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -134,7 +136,7 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
     useEffect(() => {
         const fetchUsers = async () => {
             try {
-                const res = await axios.get(`${API_URL}/api/auth/users`, {
+                const res = await axios.get(`${API_URL}/auth/users`, {
                     headers: { 'x-auth-token': localStorage.getItem('token') }
                 });
                 setAllUsers(Array.isArray(res.data) ? res.data : res.data.users || []);
@@ -196,7 +198,7 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
 
         try {
             const token = localStorage.getItem('token');
-            await axios.delete(`${API_URL}/api/channels/${activeChannel._id}`, {
+            await axios.delete(`${API_URL}/channels/${activeChannel._id}`, {
                 headers: { 'x-auth-token': token }
             });
 
@@ -228,7 +230,7 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
             const token = localStorage.getItem('token');
             const userIds = selectedUsers.map(u => (typeof u === 'object' ? u._id : u));
 
-            const res = await axios.post(`${API_URL}/api/channels/${channelId}/members`, {
+            const res = await axios.post(`${API_URL}/channels/${channelId}/members`, {
                 userIds
             }, {
                 headers: { 'x-auth-token': token }
@@ -252,7 +254,7 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
         if (!messageToDelete) return;
         try {
             const token = localStorage.getItem('token');
-            await axios.delete(`${API_URL}/api/messages/${messageToDelete._id}`, { headers: { 'x-auth-token': token } });
+            await axios.delete(`${API_URL}/messages/${messageToDelete._id}`, { headers: { 'x-auth-token': token } });
             setMessages(current => current.filter(m => m._id !== messageToDelete._id));
             setMessageToDelete(null);
         } catch (err) {
@@ -330,7 +332,7 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
             const fetchTaskInfo = async () => {
                 try {
                     const token = localStorage.getItem('token');
-                    const res = await axios.get(`${API_URL}/api/tasks/${activeChannel.taskId}`, {
+                    const res = await axios.get(`${API_URL}/tasks/${activeChannel.taskId}`, {
                         headers: { 'x-auth-token': token }
                     });
                     setTaskInfo({
@@ -378,7 +380,7 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
 
         for (const msg of savedPending) {
             try {
-                await axios.post(`${API_URL}/api/messages`, {
+                await axios.post(`${API_URL}/messages`, {
                     content: msg.content,
                     channelId: msg.channelId,
                     type: msg.type,
@@ -420,7 +422,7 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
     useEffect(() => {
         if (!socket) return;
 
-        const handleMessageParam = (message) => {
+        const handleMessageParam = async (message) => {
             // Check against ref to access latest state inside callback
             if (activeChannelRef.current && message.channel === activeChannelRef.current._id) {
                 setMessages((prev) => {
@@ -429,13 +431,41 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
                         const existingIndex = prev.findIndex(m => m.localId === message.localId);
                         if (existingIndex !== -1) {
                             const newMessages = [...prev];
-                            newMessages[existingIndex] = message; // Replace pending with real
+                            const currentMsg = newMessages[existingIndex];
+
+                            // Merge real-time arrays to prevent race conditions
+                            const mergedDeliveredTo = Array.from(new Set([
+                                ...(message.deliveredTo || []),
+                                ...(currentMsg.deliveredTo || [])
+                            ]));
+                            const mergedReadBy = Array.from(new Set([
+                                ...(message.readBy || []),
+                                ...(currentMsg.readBy || [])
+                            ]));
+
+                            newMessages[existingIndex] = {
+                                ...message,
+                                deliveredTo: mergedDeliveredTo,
+                                readBy: mergedReadBy
+                            };
                             return newMessages;
                         }
                     }
                     if (prev.some(m => m._id === message._id)) return prev;
                     return [...prev, message];
                 });
+
+                // Mark as delivered if not the sender
+                if (user && message.sender && (message.sender._id !== user._id && message.sender._id !== user.id && message.sender !== user._id && message.sender !== user.id)) {
+                    try {
+                        const token = localStorage.getItem('token');
+                        await axios.put(`${API_URL}/messages/delivered/${message._id}`, {}, {
+                            headers: { 'x-auth-token': token }
+                        });
+                    } catch (err) {
+                        console.error("Failed to mark delivered", err)
+                    }
+                }
             }
         };
 
@@ -443,12 +473,65 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
             setMessages((prev) => prev.filter(msg => msg._id !== deletedMsgId));
         };
 
+        const handleDelivered = ({ messageId, userId }) => {
+            console.log("handleDelivered Event received:", { messageId, userId });
+            setMessages((prev) => {
+                let updated = false;
+                const next = prev.map(msg => {
+                    if (String(msg._id) === String(messageId)) {
+                        updated = true;
+                        const deliveredSet = new Set(msg.deliveredTo || []);
+                        deliveredSet.add(userId);
+                        return { ...msg, deliveredTo: Array.from(deliveredSet) };
+                    }
+                    return msg;
+                });
+                console.log("handleDelivered updated?", updated);
+                return next;
+            });
+        };
+
+        const handleRead = ({ channelId, userId }) => {
+            console.log("handleRead Event received:", { channelId, userId });
+            if (activeChannelRef.current && String(channelId) === String(activeChannelRef.current._id)) {
+                setMessages((prev) => {
+                    let updated = 0;
+                    const next = prev.map(msg => {
+                        const senderId = msg.sender?._id || msg.sender;
+                        if (msg.sender && String(senderId) !== String(userId)) {
+                            updated++;
+                            const readSet = new Set(msg.readBy || []);
+                            readSet.add(userId);
+                            return { ...msg, readBy: Array.from(readSet) };
+                        }
+                        return msg;
+                    });
+                    console.log("handleRead updated count:", updated);
+                    return next;
+                });
+            } else {
+                console.log("handleRead channel mismatch or no active channel:", activeChannelRef.current?._id, channelId);
+            }
+        };
+
+        const handleEdited = ({ messageId, content, isEdited }) => {
+            setMessages((prev) => prev.map(msg =>
+                msg._id === messageId ? { ...msg, content, isEdited } : msg
+            ));
+        };
+
         socket.on('message', handleMessageParam);
         socket.on('message_deleted', handleDeleted);
+        socket.on('message_delivered', handleDelivered);
+        socket.on('messages_read', handleRead);
+        socket.on('message_edited', handleEdited);
 
         return () => {
             socket.off('message', handleMessageParam);
             socket.off('message_deleted', handleDeleted);
+            socket.off('message_delivered', handleDelivered);
+            socket.off('messages_read', handleRead);
+            socket.off('message_edited', handleEdited);
         };
     }, [socket]); // Remove activeChannel from dependency to avoid re-binding constantly
 
@@ -464,7 +547,7 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
         // console.log("ChatArea: fetching messages for channelId", channelId);
         try {
             const token = localStorage.getItem('token');
-            const res = await axios.get(`${API_URL}/api/messages/${channelId}`, {
+            const res = await axios.get(`${API_URL}/messages/${channelId}`, {
                 headers: { 'x-auth-token': token }
             });
             // console.log("ChatArea: messages fetched", res.data);
@@ -483,7 +566,7 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
                 channelId: activeChannel._id,
                 type: action === 'start' ? 'session_start' : 'session_end'
             };
-            await axios.post(`${API_URL}/api/messages`, messageData, { headers: { 'x-auth-token': token } });
+            await axios.post(`${API_URL}/messages`, messageData, { headers: { 'x-auth-token': token } });
         } catch (err) { console.error(err); }
     };
 
@@ -512,7 +595,7 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
         if (!activeChannel) return;
         try {
             const token = localStorage.getItem('token');
-            const res = await axios.get(`${API_URL}/api/messages/${activeChannel._id}/export`, {
+            const res = await axios.get(`${API_URL}/messages/${activeChannel._id}/export`, {
                 headers: { 'x-auth-token': token }
             });
             const allMessages = res.data;
@@ -551,31 +634,40 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
 
         if ((!textContent.trim() && !contentToSend.includes('<img')) || !activeChannel) return;
 
-        if (!isOnline) {
-            // Offline Mode
-            const tempId = Date.now().toString();
-            const tempMsg = {
-                _id: tempId,
-                localId: tempId,
-                content: contentToSend,
-                channelId: activeChannel._id,
-                type: 'text',
-                sender: user,
-                createdAt: new Date().toISOString(),
-                status: 'pending'
-            };
-            setMessages(prev => [...prev, tempMsg]);
-            const updatedPending = [...pendingMessages, tempMsg];
-            setPendingMessages(updatedPending);
-            localStorage.setItem('pendingMessages', JSON.stringify(updatedPending));
-            if (editorRef.current) editorRef.current.innerHTML = '';
-            setNewMessage('');
-            return;
-        }
-
-        const localId = Date.now().toString();
         try {
             const token = localStorage.getItem('token');
+            if (editingMessageId) {
+                // Editing an existing message
+                await axios.put(`${API_URL}/messages/${editingMessageId}`, { content: contentToSend }, { headers: { 'x-auth-token': token } });
+                setEditingMessageId(null);
+                if (editorRef.current) editorRef.current.innerHTML = '';
+                setNewMessage('');
+                return;
+            }
+
+            if (!isOnline) {
+                // Offline Mode
+                const tempId = Date.now().toString();
+                const tempMsg = {
+                    _id: tempId,
+                    localId: tempId,
+                    content: contentToSend,
+                    channelId: activeChannel._id,
+                    type: 'text',
+                    sender: user,
+                    createdAt: new Date().toISOString(),
+                    status: 'pending'
+                };
+                setMessages(prev => [...prev, tempMsg]);
+                const updatedPending = [...pendingMessages, tempMsg];
+                setPendingMessages(updatedPending);
+                localStorage.setItem('pendingMessages', JSON.stringify(updatedPending));
+                if (editorRef.current) editorRef.current.innerHTML = '';
+                setNewMessage('');
+                return;
+            }
+
+            const localId = Date.now().toString();
             const messageData = {
                 content: contentToSend,
                 channelId: activeChannel._id,
@@ -595,22 +687,46 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
             setMessages(prev => [...prev, optimMsg]);
             if (editorRef.current) editorRef.current.innerHTML = '';
             setNewMessage('');
-            await axios.post(`${API_URL}/api/messages`, messageData, { headers: { 'x-auth-token': token } });
+            await axios.post(`${API_URL}/messages`, messageData, { headers: { 'x-auth-token': token } });
         } catch (err) {
             console.error(err);
-            setMessages(prev => prev.filter(m => m.localId !== localId));
+            if (!editingMessageId) {
+                // setMessages(prev => prev.filter(m => m.localId !== localId));
+            }
             alert("Failed to send message");
+        }
+    };
+
+    const initiateEdit = (msg) => {
+        setEditingMessageId(msg._id);
+        if (editorRef.current) {
+            editorRef.current.innerHTML = msg.content;
+            setNewMessage(msg.content);
+            editorRef.current.focus();
+
+            // Move cursor to the end
+            const range = document.createRange();
+            const sel = window.getSelection();
+            range.selectNodeContents(editorRef.current);
+            range.collapse(false);
+            sel.removeAllRanges();
+            sel.addRange(range);
         }
     };
 
     const handleFileUpload = async (file) => {
         if (!file) return;
+        if (!activeChannel?._id) {
+            alert("Please select a channel before uploading files.");
+            return;
+        }
         const formData = new FormData();
         formData.append('file', file);
         try {
             const token = localStorage.getItem('token');
-            const uploadRes = await axios.post(`${API_URL}/api/upload`, formData, {
-                headers: { 'x-auth-token': token, 'Content-Type': 'multipart/form-data' }
+            // Upload to Local File Server instead of Render Backend
+            const uploadRes = await axios.post(`${LOCAL_UPLOAD_URL}/upload`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
             });
             const { fileUrl, thumbnailUrl, fileName, fileType } = uploadRes.data;
             const messageData = {
@@ -621,18 +737,22 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
                 thumbnailUrl: thumbnailUrl,
                 fileName: fileName || file.name
             };
-            await axios.post(`${API_URL}/api/messages`, messageData, { headers: { 'x-auth-token': token } });
+            await axios.post(`${API_URL}/messages`, messageData, { headers: { 'x-auth-token': token } });
         } catch (err) {
             console.error("Upload failed", err);
-            const errMsg = err.response?.data?.message || err.message || "Unknown error";
+            const errMsg = err.code === 'ERR_NETWORK' || err.message === 'Network Error'
+                ? "Local File Server not running! Please start it on your machine."
+                : (err.response?.data?.message || err.message || "Unknown error");
             alert(`Upload Error: ${errMsg}`);
         }
     };
 
     const handleFileSelect = async (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            await handleFileUpload(file);
+        const files = Array.from(e.target.files);
+        if (files.length > 0) {
+            for (const file of files) {
+                await handleFileUpload(file);
+            }
             e.target.value = null;
         }
     };
@@ -653,7 +773,7 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
 
     const handleCreateChannel = async (channelData) => {
         try {
-            const res = await axios.post(`${API_URL}/api/channels`, channelData, {
+            const res = await axios.post(`${API_URL}/channels`, channelData, {
                 headers: { 'x-auth-token': localStorage.getItem('token') }
             });
             setIsCreateChannelModalOpen(false);
@@ -670,23 +790,36 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
         const bubbleText = isOwn ? 'text-white' : 'text-gray-200';
         const subText = isOwn ? 'text-blue-100' : 'text-gray-400';
 
-        if (msg.type?.startsWith('image/') || msg.fileUrl?.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+        // Rewrite old 'localhost' URLs to the current hostname so they work cross-device
+        const getFixedUrl = (url) => {
+            if (!url) return url;
+            // Only rewrite localhost if we have a real hostname (web) and it's NOT the local-file-server itself
+            if (window.location.hostname && window.location.hostname !== 'localhost' && url.includes('localhost:5001')) {
+                return url.replace('http://localhost:5001', `http://${window.location.hostname}:5001`);
+            }
+            return url;
+        };
+
+        const fileUrl = getFixedUrl(msg.fileUrl);
+        const thumbnailUrl = getFixedUrl(msg.thumbnailUrl);
+
+        if (msg.type?.startsWith('image/') || fileUrl?.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
             return (
                 <div className="relative group">
                     <ProgressiveImage
-                        lowResSrc={msg.thumbnailUrl}
-                        highResSrc={msg.fileUrl}
+                        lowResSrc={thumbnailUrl}
+                        highResSrc={fileUrl}
                         alt="Shared image"
                         className="rounded-lg max-w-full h-auto mb-1 border border-black/10 max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity bg-[#222529]"
-                        onClick={() => setSelectedMedia({ src: msg.fileUrl, type: 'image', fileName: msg.fileName })}
+                        onClick={() => setSelectedMedia({ src: fileUrl, type: 'image', fileName: msg.fileName })}
                     />
                 </div>
             );
-        } else if (msg.type?.startsWith('video/') || msg.fileUrl?.match(/\.(mp4|mov|mkv)$/i) || (msg.fileUrl?.match(/\.webm$/i) && msg.type !== 'audio/webm')) {
+        } else if (msg.type?.startsWith('video/') || fileUrl?.match(/\.(mp4|mov|mkv)$/i) || (fileUrl?.match(/\.webm$/i) && msg.type !== 'audio/webm')) {
             return (
-                <div className="relative group cursor-pointer" onClick={() => setSelectedMedia({ src: msg.fileUrl, type: 'video', fileName: msg.fileName })}>
+                <div className="relative group cursor-pointer" onClick={() => setSelectedMedia({ src: fileUrl, type: 'video', fileName: msg.fileName })}>
                     <video className="rounded-lg max-w-full mb-1 border border-black/10 max-h-64 pointer-events-none bg-black">
-                        <source src={msg.fileUrl} />
+                        <source src={fileUrl} />
                     </video>
                     <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
                         <div className="bg-white/20 p-2 rounded-full backdrop-blur-sm">
@@ -695,19 +828,19 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
                     </div>
                 </div>
             );
-        } else if (msg.type?.startsWith('audio/') || msg.fileUrl?.match(/\.(mp3|wav|ogg)$/i) || (msg.fileUrl?.match(/\.webm$/i) && msg.type === 'audio/webm')) {
+        } else if (msg.type?.startsWith('audio/') || fileUrl?.match(/\.(mp3|wav|ogg)$/i) || (fileUrl?.match(/\.webm$/i) && msg.type === 'audio/webm')) {
             return (
                 <div className="min-w-[200px] max-w-[300px] mt-1">
                     <audio controls className="w-full h-10 rounded-lg">
-                        <source src={msg.fileUrl} />
+                        <source src={fileUrl} />
                     </audio>
                 </div>
             );
-        } else if (msg.fileUrl) {
+        } else if (fileUrl) {
             return (
                 <div
                     className={`flex items-center gap-3 p-3 rounded-lg border mb-1 backdrop-blur-sm cursor-pointer transition-colors ${isOwn ? 'bg-white/20 border-white/20 hover:bg-white/30' : 'bg-[#2b2f33] border-white/5 hover:bg-[#34383c]'}`}
-                    onClick={() => setSelectedMedia({ src: msg.fileUrl, type: msg.type || 'file', fileName: msg.fileName })}
+                    onClick={() => setSelectedMedia({ src: fileUrl, type: msg.type || 'file', fileName: msg.fileName })}
                 >
                     <div className={`h-10 w-10 rounded flex items-center justify-center ${isOwn ? 'bg-black/20 text-white' : 'bg-white/10 text-gray-300'}`}>
                         <FileText size={20} />
@@ -1018,8 +1151,11 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
 
                 {/* Header */}
                 <div className="h-16 flex items-center px-6 justify-between bg-[#1A1D21] border-b border-white/5 shadow-sm z-20">
-                    <div className="flex-1">
-                        <h3 className="text-lg font-bold text-gray-200 flex items-center gap-2">
+                    <div className="flex-1 min-w-0 pr-4">
+                        <h3
+                            className="text-lg font-bold text-gray-200 truncate"
+                            title={taskInfo ? `${taskInfo.project} - ${taskInfo.title}` : activeChannel?.headerTitle || activeChannel?.name}
+                        >
                             {taskInfo ? (
                                 <span>{taskInfo.project} - {taskInfo.title}</span>
                             ) : (
@@ -1027,12 +1163,12 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
                                     activeChannel.headerTitle ? (
                                         <span>{activeChannel.headerTitle}</span>
                                     ) : (
-                                        <><span className="text-gray-500">#</span> {activeChannel.name}</>
+                                        <><span className="text-gray-500 mr-1">#</span>{activeChannel.name}</>
                                     )
                                 ) : 'Select a channel'
                             )}
                         </h3>
-                        <p className="text-xs text-gray-500">Team discussion and updates</p>
+                        <p className="text-xs text-gray-500 truncate">Team discussion and updates</p>
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -1208,11 +1344,62 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
                                         </div>
                                     ) : renderMessageContent(msg, isOwn)}
 
-                                    {/* Timestamp */}
+                                    {/* Action Menu (3 dots) for Own Messages */}
+                                    {isOwn && msg.type !== 'session_start' && msg.type !== 'session_end' && msg.type === 'text' && (
+                                        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-[#006e51] p-0.5 rounded shadow-sm z-10 flex dropdown-container">
+                                            <button
+                                                className="text-white hover:text-gray-200 transition-colors rounded p-1"
+                                                title="More actions"
+                                                onClick={(e) => {
+                                                    const menu = e.currentTarget.nextElementSibling;
+                                                    menu.classList.toggle('hidden');
+                                                }}
+                                            >
+                                                <MoreVertical size={14} />
+                                            </button>
+                                            <div className="hidden absolute right-0 top-full mt-1 bg-[#222529] border border-white/10 rounded-lg shadow-xl overflow-hidden min-w-[120px]">
+                                                <button
+                                                    onClick={() => {
+                                                        initiateEdit(msg);
+                                                        // close menu
+                                                        const menus = document.querySelectorAll('.dropdown-container > div');
+                                                        menus.forEach(m => m.classList.add('hidden'));
+                                                    }}
+                                                    className="w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-white/10 transition-colors flex items-center gap-2"
+                                                >
+                                                    <Edit2 size={12} /> Edit
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Timestamp and Status */}
                                     {msg.type !== 'session_start' && msg.type !== 'session_end' && (
                                         <div className={`text-[9px] mt-1 flex justify-end items-center gap-1 ${isOwn ? 'text-emerald-100' : 'text-gray-500'}`}>
+                                            {msg.isEdited && <span className="italic mr-1">(edited)</span>}
                                             {msg.status === 'pending' && <Clock size={8} className="animate-pulse" />}
                                             <span>{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                            {isOwn && msg.status !== 'pending' && (
+                                                <span className="ml-1 flex">
+                                                    {(() => {
+                                                        // Calculate read receipts - converting both to String for safe comparison
+                                                        const readCount = msg.readBy ? msg.readBy.filter(id => String(id) !== String(user.id) && String(id) !== String(user._id)).length : 0;
+                                                        const deliveredCount = msg.deliveredTo ? msg.deliveredTo.filter(id => String(id) !== String(user.id) && String(id) !== String(user._id)).length : 0;
+
+                                                        // DM vs Group logic to determine if "everyone" has read/delivered
+                                                        const targetCount = activeChannel?.type === 'DM' ? 1 :
+                                                            (activeChannel?.allowedUsers ? Math.max(1, activeChannel.allowedUsers.length - 1) : 1);
+
+                                                        if (readCount > 0) {
+                                                            return <CheckCheck size={14} strokeWidth={1.5} className="text-blue-400" />;
+                                                        } else if (deliveredCount > 0) {
+                                                            return <CheckCheck size={14} strokeWidth={1.5} className="text-gray-400" />;
+                                                        } else {
+                                                            return <Check size={14} strokeWidth={1.5} className="text-gray-400" />; // Single gray tick (Sent)
+                                                        }
+                                                    })()}
+                                                </span>
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -1322,10 +1509,42 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
                                     }
                                     setNewMessage(e.currentTarget.innerHTML);
                                 }}
-                                onPaste={(e) => {
+                                onPaste={async (e) => {
                                     e.preventDefault();
-                                    const text = e.clipboardData.getData('text/plain');
-                                    document.execCommand('insertText', false, text);
+
+                                    // Check if there are files (like pasted screenshots)
+                                    const items = e.clipboardData.items;
+                                    let hasFile = false;
+                                    for (let i = 0; i < items.length; i++) {
+                                        if (items[i].type.indexOf('image') !== -1 || items[i].type.indexOf('video') !== -1) {
+                                            const file = items[i].getAsFile();
+                                            if (file) {
+                                                await handleFileUpload(file);
+                                                hasFile = true;
+                                            }
+                                        }
+                                    }
+
+                                    if (!hasFile) {
+                                        const text = e.clipboardData.getData('text/plain');
+                                        if (text) {
+                                            document.execCommand('insertText', false, text);
+                                        }
+                                    }
+                                }}
+                                onDrop={async (e) => {
+                                    e.preventDefault();
+                                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                                        for (let i = 0; i < e.dataTransfer.files.length; i++) {
+                                            await handleFileUpload(e.dataTransfer.files[i]);
+                                        }
+                                    } else {
+                                        // Allow text drops if needed, but block HTML elements
+                                        const text = e.dataTransfer.getData('text/plain');
+                                        if (text) {
+                                            document.execCommand('insertText', false, text);
+                                        }
+                                    }
                                 }}
                                 onKeyUp={checkActiveFormats}
                                 onMouseUp={checkActiveFormats}
@@ -1354,8 +1573,13 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
                         {/* Bottom Toolbar */}
                         <div className="flex items-center justify-between p-2">
                             <div className="flex items-center gap-1">
-                                <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
-                                <button type="button" onClick={() => fileInputRef.current?.click()} className="h-8 w-8 flex items-center justify-center hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-colors bg-white/5" title="Attach File">
+                                <input type="file" ref={fileInputRef} className="hidden" multiple onChange={handleFileSelect} />
+                                <button type="button" onClick={() => {
+                                    if (fileInputRef.current) {
+                                        fileInputRef.current.removeAttribute('accept');
+                                        fileInputRef.current.click();
+                                    }
+                                }} className="h-8 w-8 flex items-center justify-center hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-colors bg-white/5" title="Attach File">
                                     <Paperclip size={16} />
                                 </button>
 
@@ -1365,7 +1589,7 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
                                         type="button"
                                         onClick={() => setIsCreateMenuOpen(!isCreateMenuOpen)}
                                         className={`h-8 w-8 flex items-center justify-center hover:bg-white/10 rounded-full transition-colors bg-white/5 ${isCreateMenuOpen ? 'text-white bg-white/10' : 'text-gray-400 hover:text-white'}`}
-                                        title="Create Channel"
+                                        title="Attachments"
                                     >
                                         <Plus size={16} />
                                     </button>
@@ -1377,25 +1601,42 @@ export default function ChatArea({ activeChannel, user, isSidebarOpen, onChannel
                                                 <div className="py-1">
                                                     <button
                                                         onClick={() => {
-                                                            setCreateChannelInitialType('Global');
-                                                            setIsCreateChannelModalOpen(true);
+                                                            if (fileInputRef.current) {
+                                                                fileInputRef.current.accept = 'image/*,video/*';
+                                                                fileInputRef.current.click();
+                                                            }
                                                             setIsCreateMenuOpen(false);
                                                         }}
                                                         className="w-full text-left px-4 py-2.5 hover:bg-[#35373C] text-gray-200 text-sm flex items-center gap-3 transition-colors"
                                                     >
-                                                        <Globe size={16} className="text-gray-400" />
-                                                        <span>Create Main Channel</span>
+                                                        <ImageIcon size={16} className="text-gray-400" />
+                                                        <span>Photos & Videos</span>
                                                     </button>
                                                     <button
                                                         onClick={() => {
-                                                            setCreateChannelInitialType('Private');
-                                                            setIsCreateChannelModalOpen(true);
+                                                            if (fileInputRef.current) {
+                                                                fileInputRef.current.accept = 'audio/*';
+                                                                fileInputRef.current.click();
+                                                            }
                                                             setIsCreateMenuOpen(false);
                                                         }}
                                                         className="w-full text-left px-4 py-2.5 hover:bg-[#35373C] text-gray-200 text-sm flex items-center gap-3 transition-colors"
                                                     >
-                                                        <Lock size={16} className="text-gray-400" />
-                                                        <span>Create Department Channel</span>
+                                                        <Music size={16} className="text-gray-400" />
+                                                        <span>Audio</span>
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            if (fileInputRef.current) {
+                                                                fileInputRef.current.accept = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt';
+                                                                fileInputRef.current.click();
+                                                            }
+                                                            setIsCreateMenuOpen(false);
+                                                        }}
+                                                        className="w-full text-left px-4 py-2.5 hover:bg-[#35373C] text-gray-200 text-sm flex items-center gap-3 transition-colors"
+                                                    >
+                                                        <FileText size={16} className="text-gray-400" />
+                                                        <span>Documents</span>
                                                     </button>
                                                 </div>
                                             </div>

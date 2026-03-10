@@ -1,10 +1,11 @@
+const hostname = (typeof window !== 'undefined' && window.location.hostname) ? window.location.hostname : 'localhost';
 
-const BASE_URL = "https://task-manager-fox-frontend.onrender.com";
-export const API_URL = `${BASE_URL}/api`;
-// export const API_URL = "http://localhost:5000/api";
+const BASE_URL = `http://${hostname}:5000`;
+
+export const API_URL = `https://task-manager-fox-frontend.onrender.com/api`;
+export const LOCAL_UPLOAD_URL = `http://192.168.1.1:5001`;
 
 export const getSocketUrl = () => {
-    // If API_URL contains "/api", remove it to get the base URL for socket.io
     if (API_URL.endsWith("/api")) {
         return API_URL.slice(0, -4);
     }

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AiFillEye, AiFillEyeInvisible } from "react-icons/ai";
 import { Device } from '@capacitor/device';
+import { useAuth } from "../context/AuthContext";
 
 import { API_URL } from "../utils/config";
 
@@ -9,13 +10,18 @@ const Auth = () => {
   const [mode, setMode] = useState("login"); // login | signup
   const [role, setRole] = useState("Employee");
   const [showPassword, setShowPassword] = useState(false);
-  const [form, setForm] = useState({
-    email: "",
-    password: "",
+  const [form, setForm] = useState(() => {
+    const savedEmail = localStorage.getItem("rememberedEmail");
+    const savedPassword = localStorage.getItem("rememberedPassword");
+    return {
+      email: savedEmail || "",
+      password: savedPassword || "",
+    };
   });
   const [error, setError] = useState("");
 
   const navigate = useNavigate();
+  const { login } = useAuth();
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -31,14 +37,14 @@ const Auth = () => {
       if (window.electronAPI) {
         deviceId = await window.electronAPI.getDeviceId();
       } else {
-        deviceId = "Web Browser"; // Default fallback for standard Chrome/Edge access
+        deviceId = "Desktop Device";
         try {
           const info = await Device.getId();
           if (info && info.identifier) {
-            deviceId = `Mobile: ${info.identifier.substring(0, 8)}`;
+            deviceId = `Desktop Device: ${info.identifier.substring(0, 8)}`;
           }
         } catch (e) {
-          // Device.getId() threw, we stay on 'Web Browser'
+          // Default to 'Desktop Device' if getid fails
         }
       }
     } catch (err) {
@@ -83,13 +89,11 @@ const Auth = () => {
           return;
         }
 
-        localStorage.setItem("user", JSON.stringify(data.user));
-        localStorage.setItem("token", data.token); // Store token separately
-        if (isSuperAdmin) {
-          navigate("/dashboard");
-        } else {
-          navigate("/employee-dashboard");
-        }
+        // Save credentials for autofill on next app open
+        localStorage.setItem("rememberedEmail", form.email);
+        localStorage.setItem("rememberedPassword", form.password);
+
+        login(data.user, data.token);
       } else {
         alert("Signup successful! Please login."); // Keep alert for success or change to toast? User only mentioned Login errors.
         setMode("login");

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import LogDetailsModal from '../components/LogDetailsModal';
@@ -19,6 +19,20 @@ const ProjectReportPage = () => {
     const [projectData, setProjectData] = useState(null);
     const [selectedLog, setSelectedLog] = useState(null);
     const [selectedTaskForDetails, setSelectedTaskForDetails] = useState(null);
+    const [employees, setEmployees] = useState([]);
+
+    useEffect(() => {
+        const fetchEmployees = async () => {
+            try {
+                const res = await axios.get(`${API_URL}/employee/all`);
+                setEmployees(res.data);
+            } catch (err) {
+                console.error("Failed to fetch employees", err);
+            }
+        };
+        fetchEmployees();
+    }, []);
+
     const handleActionClick = (log, index) => {
         setSelectedLog({ ...log, displayTaskNo: (log.taskNo || log["Task No"] || "0").toString().padStart(2, '0') });
     };
@@ -75,29 +89,33 @@ const ProjectReportPage = () => {
 
     const calculateDurationStr = (start, end) => {
         if (!start || !end) return "";
-        const [startHours, startMins] = start.split(':').map(Number);
-        const [endHours, endMins] = end.split(':').map(Number);
+        const [startHours, startMins, startSecs = 0] = start.split(':').map(Number);
+        const [endHours, endMins, endSecs = 0] = end.split(':').map(Number);
 
-        const startDate = new Date(0, 0, 0, startHours, startMins, 0);
-        const endDate = new Date(0, 0, 0, endHours, endMins, 0);
+        const startDate = new Date(0, 0, 0, startHours, startMins, startSecs);
+        const endDate = new Date(0, 0, 0, endHours, endMins, endSecs);
 
         let diff = endDate.getTime() - startDate.getTime();
         if (diff < 0) { diff += 24 * 60 * 60 * 1000; }
 
-        const hours = Math.floor(diff / 1000 / 60 / 60);
-        const minutes = Math.floor((diff / 1000 / 60 / 60 - hours) * 60);
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        diff -= hours * 1000 * 60 * 60;
+        const minutes = Math.floor(diff / (1000 * 60));
+        diff -= minutes * 1000 * 60;
+        const seconds = Math.floor(diff / 1000);
 
         let durationString = "";
         if (hours > 0) durationString += `${hours} hr${hours > 1 ? 's' : ''} `;
-        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''}`;
+        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''} `;
+        if (seconds > 0) durationString += `${seconds} sec${seconds > 1 ? 's' : ''}`;
 
-        return durationString.trim() || "0 min";
+        return durationString.trim() || "0 sec";
     };
 
     const calculateTotalHours = (logs) => {
         let totalMinutes = 0;
         logs.forEach(log => {
-            const durationStr = log.timeAutomation || log.duration || calculateDurationStr(log.startTime, log.endTime);
+            const durationStr = log.duration || log.timeAutomation || calculateDurationStr(log.startTime, log.endTime);
             const hoursMatch = durationStr.match(/(\d+)\s*hr/);
             const minutesMatch = durationStr.match(/(\d+)\s*min/);
 
@@ -165,7 +183,19 @@ const ProjectReportPage = () => {
     const tasksDownloadColumns = [
         { header: "Assigned By", accessor: (item) => item.assignedBy?.name || "Admin" },
         { header: "Title Name", accessor: "taskTitle" },
-        { header: "Assigned To", accessor: (item) => item.assignedTo?.map(u => u.name).join(', ') || "Unassigned" },
+        {
+            header: "Assigned To", accessor: (item) => {
+                let targets = item.assignedTo && item.assignedTo.length > 0 ? item.assignedTo : item.assignee;
+                if (!targets || targets.length === 0) {
+                    return item.assignType === "Overall" ? "Overall (All)" : "Unassigned";
+                }
+                return targets.map(u => {
+                    if (typeof u === 'object' && u.name) return u.name;
+                    const emp = employees.find(e => e._id === u);
+                    return emp ? emp.name : u;
+                }).join(", ");
+            }
+        },
         { header: "Priority", accessor: (item) => item.priority || "Normal" },
         { header: "Status", accessor: (item) => item.status || "Pending" }
     ];
@@ -178,7 +208,7 @@ const ProjectReportPage = () => {
         { header: "Description", accessor: (item) => item.description || item["Task Description"] || "-" },
         { header: "Start Time", accessor: "startTime" },
         { header: "End Time", accessor: "endTime" },
-        { header: "Duration", accessor: (item) => item.timeAutomation || item.duration || calculateDurationStr(item.startTime, item.endTime) || "0 min" },
+        { header: "Duration", accessor: (item) => item.duration || item.timeAutomation || calculateDurationStr(item.startTime, item.endTime) || "0 min" },
         { header: "Log Type", accessor: "logType" },
         { header: "Status", accessor: "status" }
     ];
@@ -199,7 +229,7 @@ const ProjectReportPage = () => {
     return (
         <div className="flex h-screen bg-slate-50">
             <Sidebar />
-            <div className="flex-1 overflow-auto p-6 lg:p-10 text-slate-800 relative z-0">
+            <div className="flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-6 lg:p-10 text-slate-800 relative z-0">
                 <div className="max-w-[1600px] mx-auto space-y-8">
 
                     {/* Header and Search */}
@@ -328,8 +358,8 @@ const ProjectReportPage = () => {
                                     </div>
 
                                     {projectData.tasks && projectData.tasks.length > 0 ? (
-                                        <div className="overflow-x-auto overflow-y-auto max-h-[500px] flex-1 scrollbar-hide">
-                                            <table className="w-full text-left border-collapse min-w-[1000px] table-fixed">
+                                        <div className="w-full overflow-x-auto overflow-y-auto max-h-[500px] flex-1 custom-scrollbar">
+                                            <table className="w-full text-left border-collapse min-w-[1000px] xl:min-w-full table-fixed">
                                                 <thead>
                                                     <tr className="bg-gray-50/50 text-left border-b border-gray-200">
                                                         <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[5%] text-center">S.No</th>
@@ -363,12 +393,26 @@ const ProjectReportPage = () => {
                                                                     <div className="flex items-center gap-2">
                                                                         <span className="text-[10px] uppercase font-bold text-gray-400 w-6">To:</span>
                                                                         <div className="text-sm font-semibold text-indigo-900 truncate max-w-[150px]" title={(() => {
-                                                                            if (!task.assignedTo || task.assignedTo.length === 0) return "Unassigned";
-                                                                            return task.assignedTo.map(u => u.name).join(", ");
+                                                                            let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
+                                                                            if (!targets || targets.length === 0) {
+                                                                                return task.assignType === "Overall" ? "Overall (All)" : "Unassigned";
+                                                                            }
+                                                                            return targets.map(u => {
+                                                                                if (typeof u === 'object' && u.name) return u.name;
+                                                                                const emp = employees.find(e => e._id === u);
+                                                                                return emp ? emp.name : u;
+                                                                            }).join(", ");
                                                                         })()}>
                                                                             {(() => {
-                                                                                if (!task.assignedTo || task.assignedTo.length === 0) return <span className="text-gray-400 italic text-xs">Unassigned</span>;
-                                                                                return task.assignedTo.map(u => u.name).join(", ");
+                                                                                let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
+                                                                                if (!targets || targets.length === 0) {
+                                                                                    return <span className="text-gray-400 italic text-xs">{task.assignType === "Overall" ? "Overall (All)" : "Unassigned"}</span>;
+                                                                                }
+                                                                                return targets.map(u => {
+                                                                                    if (typeof u === 'object' && u.name) return u.name;
+                                                                                    const emp = employees.find(e => e._id === u);
+                                                                                    return emp ? emp.name : u;
+                                                                                }).join(", ");
                                                                             })()}
                                                                         </div>
                                                                     </div>
@@ -441,8 +485,8 @@ const ProjectReportPage = () => {
                                         </span>
                                     </div>
                                     {projectData.logs && projectData.logs.length > 0 ? (
-                                        <div className="overflow-x-auto overflow-y-auto max-h-[500px] flex-1 scrollbar-hide">
-                                            <table className="w-full text-left border-collapse min-w-[1000px] table-fixed">
+                                        <div className="w-full overflow-x-auto overflow-y-auto max-h-[500px] flex-1 custom-scrollbar">
+                                            <table className="w-full text-left border-collapse min-w-[1000px] xl:min-w-full table-fixed">
                                                 <thead>
                                                     <tr className="bg-white text-gray-500 text-xs border-b border-gray-100 uppercase tracking-wider">
                                                         <th className="p-4 font-semibold w-[5%] text-center text-gray-400">S.No</th>
@@ -455,7 +499,7 @@ const ProjectReportPage = () => {
                                                 </thead>
                                                 <tbody className="divide-y divide-gray-50 bg-white">
                                                     {projectData.logs.map((log, index) => {
-                                                        const displayDuration = log.timeAutomation || log.duration || calculateDurationStr(log.startTime, log.endTime);
+                                                        const displayDuration = log.duration || log.timeAutomation || calculateDurationStr(log.startTime, log.endTime);
                                                         const displayTaskNo = (log.taskNo || log["Task No"] || "0").toString().padStart(2, '0');
                                                         const rawDate = log.date || log.Date;
 

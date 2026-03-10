@@ -8,10 +8,11 @@ const getCurrentTime = () => {
     const now = new Date();
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
-    return `${hours}:${minutes}`;
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    return `${hours}:${minutes}:${seconds}`;
 };
 
-const QuickTaskForm = ({ user, onClose, onSuccess }) => {
+const QuickTaskForm = ({ user, onClose, onSuccess, editLog }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [isOffline, setIsOffline] = useState(!navigator.onLine);
@@ -49,29 +50,40 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
         return () => clearInterval(timer);
     }, [showSuccess]);
 
+    const [isMeeting, setIsMeeting] = useState(false);
+
+    const defaultFormData = {
+        date: editLog ? editLog.date : new Date().toISOString().split('T')[0],
+        taskNo: editLog ? editLog.taskNo : "Auto",
+        projectName: editLog ? (Array.isArray(editLog.projectName) ? editLog.projectName : (editLog.projectName ? editLog.projectName.split(',').map(s => s.trim()) : [])) : [],
+        startTime: editLog ? editLog.startTime : getCurrentTime(),
+        endTime: editLog ? editLog.endTime : getCurrentTime(),
+        taskOwner: editLog ? (Array.isArray(editLog.taskOwner) ? editLog.taskOwner : (editLog.taskOwner ? editLog.taskOwner.split(',').map(s => s.trim()) : [])) : [],
+        description: editLog ? editLog.description : "",
+        taskType: editLog ? (Array.isArray(editLog.taskType) ? editLog.taskType : (editLog.taskType ? editLog.taskType.split(',').map(s => s.trim()) : [])) : [],
+        timeAutomation: editLog ? (editLog.duration || editLog.timeAutomation) : "",
+        status: editLog ? editLog.status : "In Progress",
+        logType: editLog ? editLog.logType : (isMeeting ? "Meeting" : "Quick"),
+        assignedBy: editLog ? (Array.isArray(editLog.assignedBy) ? editLog.assignedBy : (editLog.assignedBy ? editLog.assignedBy.split(',').map(s => s.trim()) : [])) : [],
+        employeeId: editLog ? editLog.employeeId : ""
+    };
+
     const handleCloseSuccess = () => {
         setShowSuccess(false);
         setTimeLeft(30);
+
+        // Reset form data to default values
+        setFormData({
+            ...defaultFormData,
+            employeeId: formData.employeeId // Preserve the populated employeeId
+        });
+
         if (onSuccess) onSuccess();
         if (onClose) onClose();
     };
 
-    // Initial state with NO default values as requested
-    const [formData, setFormData] = useState({
-        date: new Date().toISOString().split('T')[0],
-        taskNo: "Auto",
-        projectName: [], // Changed to array for multiple selection
-        startTime: getCurrentTime(),
-        endTime: getCurrentTime(),
-        taskOwner: "",
-        description: "",
-        taskType: [],
-        timeAutomation: "",
-        status: "In Progress",
-        logType: "Quick",
-        assignedBy: [], // Added assignedBy state
-        employeeId: "" // Will be populated from localStorage
-    });
+    // Initial state with default values
+    const [formData, setFormData] = useState(defaultFormData);
 
     const [projects, setProjects] = useState([]);
     const [owners, setOwners] = useState([]);
@@ -143,8 +155,10 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
     }, []);
 
     useEffect(() => {
-        fetchTaskCount(formData.date);
-    }, [formData.date]);
+        if (!editLog) {
+            fetchTaskCount(formData.date);
+        }
+    }, [formData.date, editLog]);
 
     const handleChange = (e) => {
         const { name, value } = e.target;
@@ -283,18 +297,25 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
     // Duration Logic
     const calculateDurationStr = (start, end) => {
         if (!start || !end) return "";
-        const [startHours, startMins] = start.split(':').map(Number);
-        const [endHours, endMins] = end.split(':').map(Number);
-        const startDate = new Date(0, 0, 0, startHours, startMins, 0);
-        const endDate = new Date(0, 0, 0, endHours, endMins, 0);
+        const [startHours, startMins, startSecs = 0] = start.split(':').map(Number);
+        const [endHours, endMins, endSecs = 0] = end.split(':').map(Number);
+        const startDate = new Date(0, 0, 0, startHours, startMins, startSecs);
+        const endDate = new Date(0, 0, 0, endHours, endMins, endSecs);
         let diff = endDate.getTime() - startDate.getTime();
         if (diff < 0) diff += 24 * 60 * 60 * 1000;
-        const hours = Math.floor(diff / 1000 / 60 / 60);
-        const minutes = Math.floor((diff / 1000 / 60 / 60 - hours) * 60);
+
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        diff -= hours * 1000 * 60 * 60;
+        const minutes = Math.floor(diff / (1000 * 60));
+        diff -= minutes * 1000 * 60;
+        const seconds = Math.floor(diff / 1000);
+
         let durationString = "";
         if (hours > 0) durationString += `${hours} hr${hours > 1 ? 's' : ''} `;
-        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''}`;
-        return durationString.trim() || "0 min";
+        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''} `;
+        if (seconds > 0) durationString += `${seconds} sec${seconds > 1 ? 's' : ''}`;
+
+        return durationString.trim() || "0 sec";
     };
 
     useEffect(() => {
@@ -307,9 +328,15 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        setError(null);
 
         if (formData.projectName.length === 0 || formData.taskOwner.length === 0 || formData.taskType.length === 0 || !formData.date || !formData.startTime || !formData.endTime || !formData.description) {
-            alert("Please fill in all required fields.");
+            setError("Please fill in all required fields.");
+            return;
+        }
+
+        if (!formData.timeAutomation || formData.timeAutomation === "0 sec" || formData.timeAutomation === "Auto") {
+            setError("Duration cannot be 0 seconds. Please provide valid start and end times.");
             return;
         }
 
@@ -328,7 +355,7 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
             duration: formData.timeAutomation,
             status: formData.status,
             taskTitle: Array.isArray(formData.projectName) ? formData.projectName.join(", ") : formData.projectName,
-            logType: isOffline ? "Offline Task" : "Quick",
+            logType: isOffline ? "Offline Task" : formData.logType,
             assignedBy: Array.isArray(formData.assignedBy) ? formData.assignedBy.join(", ") : formData.assignedBy // Save as string
         };
 
@@ -347,8 +374,12 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
         }
 
         try {
-            const res = await fetch(`${API_URL}/work-logs`, {
-                method: "POST",
+            const url = editLog ? `${API_URL}/work-logs/${editLog._id}` : `${API_URL}/work-logs`;
+            const method = editLog ? "PUT" : "POST";
+
+            // If editing, we shouldn't send Date/Time if they aren't supposed to change, but let's just send what we have
+            const res = await fetch(url, {
+                method: method,
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload)
             });
@@ -357,10 +388,10 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
             if (res.ok) {
                 setShowSuccess(true);
             } else {
-                alert(data.message || "Failed to add task");
+                alert(data.message || `Failed to ${editLog ? 'update' : 'add'} task`);
             }
         } catch (error) {
-            console.error("Error adding task:", error);
+            console.error(`Error ${editLog ? 'updating' : 'adding'} task:`, error);
             alert("Server error");
         } finally {
             setLoading(false);
@@ -370,7 +401,28 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
     return (
         <div className="h-full flex flex-col bg-white relative">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                <h3 className="text-lg font-bold text-gray-800">New Quick Task</h3>
+                <div className="flex bg-gray-200/70 p-1 rounded-lg">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setIsMeeting(false);
+                            setFormData(prev => ({ ...prev, logType: "Quick" }));
+                        }}
+                        className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all duration-300 ${!isMeeting ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                        New Quick Task
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setIsMeeting(true);
+                            setFormData(prev => ({ ...prev, logType: "Meeting" }));
+                        }}
+                        className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all duration-300 ${isMeeting ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                        Meeting
+                    </button>
+                </div>
                 <button
                     onClick={onClose}
                     className="text-gray-500 hover:text-gray-700 p-2 rounded-full hover:bg-gray-200 transition-colors"
@@ -393,10 +445,11 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
                             value={formData.projectName}
                             onChange={(val) => handleDataChange('projectName', val)}
                             placeholder="Select Project(s)"
-                            allowAdd={true}
+                            allowAdd={formData.logType !== "QT Task" && formData.logType !== "QT"}
                             onAdd={(val) => handleAddNew(val, 'Project')}
                             multiple={true}
                             onDelete={handleRequestDelete}
+                            disabled={!!editLog && (editLog.logType === 'Meeting' || ["QT Task", "QT", "Quick"].includes(editLog.logType))}
                         />
                     </div>
 
@@ -422,7 +475,8 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
                             value={formData.date}
                             onChange={handleChange}
                             required
-                            className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none"
+                            readOnly={!!editLog}
+                            className={`w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none ${editLog ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
                         />
                     </div>
 
@@ -445,7 +499,9 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
                                 name="startTime"
                                 value={formData.startTime}
                                 onChange={handleChange}
-                                className="w-full px-2 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                                readOnly={!!editLog}
+                                step="1"
+                                className={`w-full px-2 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none text-sm ${editLog ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
                             />
                         </div>
                         <div>
@@ -455,7 +511,9 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
                                 name="endTime"
                                 value={formData.endTime}
                                 onChange={handleChange}
-                                className="w-full px-2 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                                readOnly={!!editLog}
+                                step="1"
+                                className={`w-full px-2 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none text-sm ${editLog ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
                             />
                         </div>
                         <div>
@@ -491,10 +549,11 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
                             value={formData.taskType}
                             onChange={(val) => handleDataChange('taskType', val)}
                             placeholder="Select Type(s)"
-                            allowAdd={true}
+                            allowAdd={formData.logType !== "QT Task" && formData.logType !== "QT"}
                             onAdd={(val) => handleAddNew(val, 'Type')}
                             multiple={true}
                             onDelete={handleRequestDelete}
+                            disabled={!!editLog && (editLog.logType === 'Meeting' || ["QT Task", "QT", "Quick"].includes(editLog.logType))}
                         />
                     </div>
 
@@ -530,12 +589,17 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
                     </div>
 
                     <div className="pt-4 sticky bottom-0 bg-white pb-2">
+                        {error && (
+                            <div className="mb-3 p-3 bg-red-50 text-red-600 border border-red-200 rounded-lg text-sm font-medium text-center shadow-sm">
+                                {error}
+                            </div>
+                        )}
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full bg-indigo-600 text-white font-bold py-3 rounded-lg hover:bg-indigo-700 transition shadow-lg"
+                            className={`w-full text-white font-bold py-3 rounded-lg transition shadow-lg ${isMeeting ? 'bg-teal-600 hover:bg-teal-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}
                         >
-                            {loading ? "Saving..." : "Save Quick Task"}
+                            {loading ? "Saving..." : editLog ? "Update Task" : (isMeeting ? "Save Meeting Details" : "Save Quick Task")}
                         </button>
                     </div>
                 </form>
@@ -577,12 +641,12 @@ const QuickTaskForm = ({ user, onClose, onSuccess }) => {
                             ✓
                         </div>
                         <h3 className="text-2xl font-bold text-gray-800 mb-2">
-                            {isOffline ? "Saved Offline!" : "Task Created!"}
+                            {isOffline ? "Saved Offline!" : (editLog ? "Task Updated!" : (isMeeting ? "Meeting Created!" : "Task Created!"))}
                         </h3>
                         <p className="text-gray-500 mb-8">
                             {isOffline
-                                ? "Your task has been saved locally and will sync once you are back online."
-                                : "Your quick task has been successfully added to the system."}
+                                ? "Your entry has been saved locally and will sync once you are back online."
+                                : (editLog ? "Your task has been successfully updated." : (isMeeting ? "Your meeting has been successfully added to the system." : "Your quick task has been successfully added to the system."))}
                         </p>
                         <button
                             onClick={handleCloseSuccess}

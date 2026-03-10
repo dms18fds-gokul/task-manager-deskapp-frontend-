@@ -13,6 +13,10 @@ const EmployeeManagement = () => {
     const [loading, setLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
 
+    const [employees, setEmployees] = useState([]);
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+    const dropdownRef = React.useRef(null);
+
     const [formData, setFormData] = useState({
         name: "",
         email: "",
@@ -48,6 +52,30 @@ const EmployeeManagement = () => {
     // Fetch options on mount
     useEffect(() => {
         fetchOptions();
+        fetchEmployees();
+    }, []);
+
+    const fetchEmployees = async () => {
+        try {
+            const res = await fetch(`${API_URL}/employee/all`);
+            if (res.ok) {
+                const data = await res.json();
+                setEmployees(data);
+            }
+        } catch (error) {
+            console.error("Error fetching employees:", error);
+        }
+    };
+
+    // Close dropdown on outside click
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setIsDropdownOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
     const fetchOptions = async () => {
@@ -122,13 +150,26 @@ const EmployeeManagement = () => {
 
     // Manual fetch handler
     const handleFetch = async () => {
-        if (formData.employeeId.length < 3) {
+        if (!formData.employeeId) {
+            alert("Please enter a valid Employee ID");
+            return;
+        }
+
+        // Extract ID if using the "EMP001 - Name - Role" format from dropdown
+        let searchId = formData.employeeId;
+        if (searchId.includes(" – ")) {
+            searchId = searchId.split(" – ")[0].trim();
+        } else if (searchId.includes(" - ")) {
+            searchId = searchId.split(" - ")[0].trim();
+        }
+
+        if (searchId.length < 3) {
             alert("Please enter a valid Employee ID");
             return;
         }
 
         try {
-            const res = await fetch(`${API_URL}/employee/${formData.employeeId}`);
+            const res = await fetch(`${API_URL}/employee/${searchId}`);
             if (res.ok) {
                 const data = await res.json();
                 setFormData((prev) => ({
@@ -139,7 +180,7 @@ const EmployeeManagement = () => {
                     role: Array.isArray(data.role) ? data.role : [data.role],
                     designation: data.designation || "",
                     workType: data.workType || "",
-                    password: "", // Reset password field on fetch
+                    password: data.password || "", // Populate with hashed DB password
                 }));
             } else {
                 alert("Employee not found");
@@ -158,7 +199,10 @@ const EmployeeManagement = () => {
                 setFormData({ ...formData, [name]: value.toUpperCase() });
             }
         } else if (name === "employeeId") {
-            setFormData({ ...formData, [name]: value.toUpperCase() });
+            setFormData({ ...formData, [name]: value });
+            if (mode === "edit") {
+                setIsDropdownOpen(true);
+            }
         } else {
             setFormData({ ...formData, [name]: value });
         }
@@ -262,7 +306,7 @@ const EmployeeManagement = () => {
     };
 
     return (
-        <div className="flex min-h-screen bg-gray-100 font-sans relative">
+        <div className="flex h-screen overflow-hidden bg-gray-100 font-sans relative">
             <Sidebar className="hidden md:flex" />
 
             <div className="flex-1 flex flex-col h-screen overflow-hidden">
@@ -278,8 +322,8 @@ const EmployeeManagement = () => {
                     </button>
                 </header>
 
-                <main className="flex-1 p-8 overflow-y-auto">
-                    <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+                <main className="flex-1 p-4 sm:p-8 overflow-y-auto w-full max-w-full overflow-x-hidden">
+                    <div className="w-full max-w-full sm:max-w-2xl mx-auto bg-white rounded-2xl shadow-sm border border-gray-100 p-5 sm:p-8">
                         <h2 className="text-2xl font-bold text-gray-800 mb-2">
                             {mode === "add" ? "Add New Employee" : "Edit Employee Role"}
                         </h2>
@@ -298,16 +342,57 @@ const EmployeeManagement = () => {
                             <div className="space-y-2">
                                 <label className="text-sm font-semibold text-gray-700">Employee ID</label>
                                 <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        name="employeeId"
-                                        value={formData.employeeId}
-                                        onChange={handleChange}
-                                        placeholder="EMP001"
-                                        required={mode === "edit"} // Only required in edit mode
-                                        className="w-full px-4 py-2.5 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none"
-                                        readOnly={mode === "add"} // Read-only in add mode
-                                    />
+                                    <div className="relative flex-1" ref={dropdownRef}>
+                                        <input
+                                            type="text"
+                                            name="employeeId"
+                                            value={formData.employeeId}
+                                            onChange={handleChange}
+                                            onFocus={() => mode === "edit" && setIsDropdownOpen(true)}
+                                            placeholder={mode === "edit" ? "Search by ID, Name or Role..." : "EMP001"}
+                                            required={mode === "edit"} // Only required in edit mode
+                                            className="w-full px-4 py-2.5 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none"
+                                            readOnly={mode === "add"} // Read-only in add mode
+                                            autoComplete="off"
+                                        />
+                                        {mode === "edit" && isDropdownOpen && employees.length > 0 && (
+                                            <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto custom-scrollbar">
+                                                {employees
+                                                    .filter((emp) => {
+                                                        const query = formData.employeeId.toLowerCase();
+                                                        const rolesStr = Array.isArray(emp.role) ? emp.role.join(", ") : (emp.role || "");
+                                                        const searchString = `${emp.employeeId} - ${emp.name} - ${rolesStr}`.toLowerCase();
+                                                        return searchString.includes(query);
+                                                    })
+                                                    .map((emp) => {
+                                                        const rolesStr = Array.isArray(emp.role) ? emp.role.join(", ") : (emp.role || "No Role");
+                                                        const displayText = `${emp.employeeId} – ${emp.name} – ${rolesStr}`;
+                                                        return (
+                                                            <div
+                                                                key={emp._id}
+                                                                className="px-4 py-2.5 hover:bg-indigo-50 cursor-pointer text-gray-700 flex flex-col border-b border-gray-50 last:border-0"
+                                                                onClick={() => {
+                                                                    setFormData({ ...formData, employeeId: displayText });
+                                                                    setIsDropdownOpen(false);
+                                                                }}
+                                                            >
+                                                                <div className="text-sm font-bold text-gray-800">{emp.employeeId} – {emp.name}</div>
+                                                                <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{rolesStr}</div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                {employees.filter((emp) => {
+                                                    const query = formData.employeeId.toLowerCase();
+                                                    const rolesStr = Array.isArray(emp.role) ? emp.role.join(", ") : (emp.role || "");
+                                                    return `${emp.employeeId} - ${emp.name} - ${rolesStr}`.toLowerCase().includes(query);
+                                                }).length === 0 && (
+                                                        <div className="px-4 py-3 text-sm text-gray-500 text-center">
+                                                            No employees found
+                                                        </div>
+                                                    )}
+                                            </div>
+                                        )}
+                                    </div>
                                     {mode === "edit" && (
                                         <button
                                             type="button"
@@ -463,8 +548,8 @@ const EmployeeManagement = () => {
 
             {/* Success Modal */}
             {showSuccessModal && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm animate-fade-in">
-                    <div className="bg-white p-8 rounded-2xl shadow-2xl w-[400px] text-center transform transition-all scale-100">
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm animate-fade-in p-4">
+                    <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-2xl w-full max-w-[400px] text-center transform transition-all scale-100">
                         <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
                             <svg className="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
@@ -487,8 +572,8 @@ const EmployeeManagement = () => {
 
             {/* Modal for Adding New Option */}
             {isModalOpen && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-96">
                         <h3 className="text-xl font-bold mb-4 capitalize">Add New {newOption.category === 'department' ? 'Department' : newOption.category === 'designation' ? 'Role' : 'Work Type'}</h3>
                         <input
                             type="text"

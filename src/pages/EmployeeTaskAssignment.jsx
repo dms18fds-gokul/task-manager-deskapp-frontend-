@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { API_URL } from "../utils/config";
 import EmployeeSidebar from "../components/EmployeeSidebar";
 import { FaCloudUploadAlt, FaMicrophone, FaStop, FaTimes, FaPlus, FaChevronDown } from "react-icons/fa";
@@ -61,6 +62,7 @@ const CustomDropdown = ({ options, value, onChange, placeholder, displayKey, val
 
 
 const EmployeeTaskAssignment = () => {
+    const navigate = useNavigate();
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
     // --- State ---
@@ -68,6 +70,7 @@ const EmployeeTaskAssignment = () => {
         projectName: "",
         taskTitle: "",
         description: "",
+        taskType: "Individual Task",
         // workCategory: "", // Removed
         roles: [],
         assignType: "Single", // Single, Department, Project, Overall
@@ -78,6 +81,7 @@ const EmployeeTaskAssignment = () => {
         department: [], // Changed to Array for Multi-select
         teamLead: "", // Selected Team Lead ID
         projectLead: "", // Selected Project Lead ID
+        dueDate: "",
 
         documents: null,
         audioFile: null
@@ -363,6 +367,7 @@ const EmployeeTaskAssignment = () => {
                     projectName: "",
                     taskTitle: "",
                     description: "",
+                    taskType: "Individual Task",
                     roles: [],
                     assignType: "Single",
                     assignee: [],
@@ -372,6 +377,7 @@ const EmployeeTaskAssignment = () => {
                     department: [],
                     teamLead: "",
                     projectLead: "",
+                    dueDate: "",
                     documents: null,
                     audioFile: null
                 }));
@@ -396,7 +402,7 @@ const EmployeeTaskAssignment = () => {
         const userStr = localStorage.getItem("user");
         if (userStr) {
             const user = JSON.parse(userStr);
-            payload.append("assignedBy", user.id);
+            payload.append("assignedBy", user.id || user._id);
         }
 
         Object.keys(formData).forEach(key => {
@@ -431,6 +437,7 @@ const EmployeeTaskAssignment = () => {
                 projectName: "",
                 taskTitle: "",
                 description: "",
+                taskType: "Individual Task",
                 // workCategory: "",
                 roles: [],
                 assignType: "Single",
@@ -441,6 +448,7 @@ const EmployeeTaskAssignment = () => {
                 department: [],
                 teamLead: "",
                 projectLead: "",
+                dueDate: "",
                 documents: null,
                 audioFile: null
             }));
@@ -482,7 +490,7 @@ const EmployeeTaskAssignment = () => {
     };
 
     return (
-        <div className="flex min-h-screen bg-gray-50 font-sans relative">
+        <div className="flex h-screen overflow-hidden bg-gray-50 font-sans relative">
             {/* Desktop Sidebar */}
             <EmployeeSidebar className="hidden md:flex" />
 
@@ -527,7 +535,24 @@ const EmployeeTaskAssignment = () => {
                 <main className="flex-1 p-6 overflow-y-auto">
                     <div className="max-w-5xl mx-auto bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
                         <div className="p-8">
-                            <h2 className="text-3xl font-extrabold text-gray-900 mb-8 border-b pb-4">Create New Task</h2>
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 border-b pb-4 gap-4">
+                                <h2 className="text-3xl font-extrabold text-gray-900">Create New Individual Task</h2>
+                                <div className="flex bg-gray-100 p-1 rounded-lg">
+                                    <button
+                                        type="button"
+                                        className="px-4 py-2 text-sm font-medium rounded-md shadow-sm bg-indigo-600 text-white"
+                                    >
+                                        Create New Individual Task
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => navigate('/employee/assign-group-task')}
+                                        className="px-4 py-2 text-sm font-medium rounded-md text-gray-700 hover:text-indigo-600 hover:bg-white transition-colors"
+                                    >
+                                        Create New Group Task
+                                    </button>
+                                </div>
+                            </div>
 
                             <form className="space-y-8" onSubmit={handleSubmit}>
                                 {/* Basic Info Section */}
@@ -731,29 +756,30 @@ const EmployeeTaskAssignment = () => {
                                     </div>
                                 </div>
 
-                                {/* Priority & Date Section */}
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                    <div>
-                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Priority</label>
-                                        <div className="flex space-x-2">
-                                            {["Low", "Medium", "High"].map(p => (
-                                                <button
-                                                    key={p}
-                                                    type="button"
-                                                    onClick={() => setFormData(prev => ({ ...prev, priority: p }))}
-                                                    className={`flex-1 py-2 rounded-lg font-medium border ${formData.priority === p
-                                                        ? p === "High" ? "bg-red-100 border-red-500 text-red-700"
-                                                            : p === "Medium" ? "bg-yellow-100 border-yellow-500 text-yellow-700"
-                                                                : "bg-green-100 border-green-500 text-green-700"
-                                                        : "bg-white border-gray-300 text-gray-600 hover:bg-gray-50"
-                                                        }`}
-                                                >
-                                                    {p}
-                                                </button>
-                                            ))}
-                                        </div>
+                                {/* Priority Section */}
+                                <div className="w-full mb-6">
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Priority</label>
+                                    <div className="flex flex-col sm:flex-row gap-4 w-full">
+                                        {["Low", "Medium", "High"].map(p => (
+                                            <button
+                                                key={p}
+                                                type="button"
+                                                onClick={() => setFormData(prev => ({ ...prev, priority: p }))}
+                                                className={`flex-1 py-3 rounded-lg font-medium border transition-all duration-200 ${formData.priority === p
+                                                    ? p === "High" ? "bg-red-100 border-red-500 text-red-700 shadow-sm"
+                                                        : p === "Medium" ? "bg-yellow-100 border-yellow-500 text-yellow-700 shadow-sm"
+                                                            : "bg-green-100 border-green-500 text-green-700 shadow-sm"
+                                                    : "bg-white border-gray-300 text-gray-600 hover:bg-gray-50 hover:border-gray-400"
+                                                    }`}
+                                            >
+                                                {p}
+                                            </button>
+                                        ))}
                                     </div>
+                                </div>
 
+                                {/* Date Section */}
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 w-full">
                                     <div>
                                         <label className="block text-sm font-semibold text-gray-700 mb-2">Start Date (Auto)</label>
                                         <input type="date" name="startDate" value={formData.startDate} onChange={handleChange}
@@ -764,6 +790,12 @@ const EmployeeTaskAssignment = () => {
                                         <label className="block text-sm font-semibold text-gray-700 mb-2">Start Time (Auto)</label>
                                         <input type="time" name="startTime" value={formData.startTime} onChange={handleChange}
                                             className="w-full px-4 py-2 rounded-lg border border-gray-300 bg-gray-100 text-gray-500 cursor-not-allowed" readOnly />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Due Date (Optional)</label>
+                                        <input type="date" name="dueDate" value={formData.dueDate || ""} onChange={handleChange}
+                                            className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition bg-white" />
                                     </div>
 
                                 </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import EmployeeSidebar from '../components/EmployeeSidebar';
 import { API_URL } from '../utils/config';
-import { FaChevronDown, FaChevronUp, FaPlus, FaEllipsisV, FaTimes, FaCalendarAlt, FaTrash, FaRedo } from 'react-icons/fa';
+import { FaChevronDown, FaChevronUp, FaPlus, FaEllipsisV, FaTimes, FaCalendarAlt, FaTrash, FaRedo, FaSearch, FaEdit } from 'react-icons/fa';
 import DownloadDropdown from "../components/DownloadDropdown";
 import CustomDropdown from "../components/CustomDropdown";
 import QuickTaskForm from "../components/QuickTaskForm.jsx";
@@ -12,6 +12,10 @@ const LogTime = () => {
     const [loading, setLoading] = useState(false);
     const [selectedLog, setSelectedLog] = useState(null); // For popup details
     const [isPopupOpen, setIsPopupOpen] = useState(false);
+
+    // Edit Modal State
+    const [editingLog, setEditingLog] = useState(null);
+
     const [popupPosition, setPopupPosition] = useState(null); // To create a menu near the click if needed, but requirements say "popup opens" -> Modal usually.
     // The requirement says "When that icon is clicked, a popup should open. In that popup, it should show..." -> This implies a Modal.
 
@@ -66,9 +70,19 @@ const LogTime = () => {
     // State for logs
     const [recentLogs, setRecentLogs] = useState([]);
 
+    const todayStr = new Date().toISOString().split('T')[0];
     const [filters, setFilters] = useState({
         fromDate: "",
         toDate: "",
+        projectName: "",
+        taskOwner: "",
+        taskType: "",
+        status: ""
+    });
+
+    const [appliedFilters, setAppliedFilters] = useState({
+        fromDate: todayStr,
+        toDate: todayStr,
         projectName: "",
         taskOwner: "",
         taskType: "",
@@ -213,11 +227,11 @@ const LogTime = () => {
     const calculateDurationStr = (start, end) => {
         // ... same ...
         if (!start || !end) return "";
-        const [startHours, startMins] = start.split(':').map(Number);
-        const [endHours, endMins] = end.split(':').map(Number);
+        const [startHours, startMins, startSecs = 0] = start.split(':').map(Number);
+        const [endHours, endMins, endSecs = 0] = end.split(':').map(Number);
 
-        const startDate = new Date(0, 0, 0, startHours, startMins, 0);
-        const endDate = new Date(0, 0, 0, endHours, endMins, 0);
+        const startDate = new Date(0, 0, 0, startHours, startMins, startSecs);
+        const endDate = new Date(0, 0, 0, endHours, endMins, endSecs);
 
         let diff = endDate.getTime() - startDate.getTime();
 
@@ -225,14 +239,18 @@ const LogTime = () => {
             diff += 24 * 60 * 60 * 1000;
         }
 
-        const hours = Math.floor(diff / 1000 / 60 / 60);
-        const minutes = Math.floor((diff / 1000 / 60 / 60 - hours) * 60);
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        diff -= hours * 1000 * 60 * 60;
+        const minutes = Math.floor(diff / (1000 * 60));
+        diff -= minutes * 1000 * 60;
+        const seconds = Math.floor(diff / 1000);
 
         let durationString = "";
         if (hours > 0) durationString += `${hours} hr${hours > 1 ? 's' : ''} `;
-        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''}`;
+        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''} `;
+        if (seconds > 0) durationString += `${seconds} sec${seconds > 1 ? 's' : ''}`;
 
-        return durationString.trim() || "0 min";
+        return durationString.trim() || "0 sec";
     };
 
     // Auto-calculate duration
@@ -406,15 +424,51 @@ const LogTime = () => {
         }
     };
 
+    // Edit functions
+    const openEditForm = (log) => {
+        console.log("Edit icon clicked, log data received in openEditForm:", log);
+        setEditingLog(log);
+        setShowForm(true);
+        setActiveDropdownLogId(null);
+    };
+
+    const parseDate = (dStr) => {
+        if (!dStr) return 0;
+        // Handle DD-MM-YYYY or DD/MM/YYYY
+        const matchOpts = dStr.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+        if (matchOpts) {
+            const [_, d, m, y] = matchOpts;
+            return new Date(`${y}-${m}-${d}`).getTime();
+        }
+        // Handle DD-MM-YY or DD/MM/YY
+        const matchShort = dStr.match(/^(\d{2})[-/](\d{2})[-/](\d{2})$/);
+        if (matchShort) {
+            const [_, d, m, y] = matchShort;
+            return new Date(`20${y}-${m}-${d}`).getTime();
+        }
+        const parsed = new Date(dStr).getTime();
+        return isNaN(parsed) ? 0 : parsed;
+    };
+
     const filteredLogs = recentLogs.filter(log => {
-        return (
-            (!filters.fromDate || log.date >= filters.fromDate) &&
-            (!filters.toDate || log.date <= filters.toDate) &&
-            (!filters.projectName || log.projectName === filters.projectName) &&
-            (!filters.taskOwner || log.taskOwner === filters.taskOwner) &&
-            (!filters.taskType || log.taskType === filters.taskType) &&
-            (!filters.status || log.status === filters.status)
-        );
+        // Parse dates for accurate comparison
+        let isValid = true;
+        const logDate = log.date || log.Date;
+
+        if (appliedFilters.fromDate) {
+            isValid = isValid && logDate && parseDate(logDate) >= parseDate(appliedFilters.fromDate);
+        }
+
+        if (appliedFilters.toDate) {
+            isValid = isValid && logDate && parseDate(logDate) <= parseDate(appliedFilters.toDate);
+        }
+
+        if (appliedFilters.projectName && log.projectName !== appliedFilters.projectName) isValid = false;
+        if (appliedFilters.taskOwner && log.taskOwner !== appliedFilters.taskOwner) isValid = false;
+        if (appliedFilters.taskType && log.taskType !== appliedFilters.taskType) isValid = false;
+        if (appliedFilters.status && log.status !== appliedFilters.status) isValid = false;
+
+        return isValid;
     });
 
     // Grouping Logic
@@ -478,9 +532,11 @@ const LogTime = () => {
         const parts = durationStr.split(' ');
         for (let i = 0; i < parts.length; i++) {
             if (parts[i].includes('hr')) {
-                minutes += parseInt(parts[i - 1]) * 60;
+                minutes += parseInt(parts[i - 1], 10) * 60;
             } else if (parts[i].includes('min')) {
-                minutes += parseInt(parts[i - 1]);
+                minutes += parseInt(parts[i - 1], 10);
+            } else if (parts[i].includes('sec')) {
+                minutes += parseInt(parts[i - 1], 10) / 60;
             }
         }
         return minutes;
@@ -524,9 +580,11 @@ const LogTime = () => {
     };
 
     const formatTotalDuration = (totalMinutes) => {
-        const hours = Math.floor(totalMinutes / 60);
-        const minutes = totalMinutes % 60;
-        return `${hours} Hrs ${minutes} Mins`;
+        const totalSeconds = Math.round(totalMinutes * 60);
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        return `${hours} Hrs ${minutes} Mins ${seconds} Sec.`;
     };
 
     // Define columns for download
@@ -539,12 +597,12 @@ const LogTime = () => {
         { header: "Description", accessor: "description" },
         { header: "Start Time", accessor: (item) => formatTime(item.startTime) },
         { header: "End Time", accessor: (item) => formatTime(item.endTime) },
-        { header: "Duration", accessor: (item) => item.timeAutomation || item.duration || calculateDurationStr(item.startTime, item.endTime) },
+        { header: "Duration", accessor: (item) => item.duration || item.timeAutomation || calculateDurationStr(item.startTime, item.endTime) },
         { header: "Status", accessor: "status" }
     ];
 
     return (
-        <div className="flex min-h-screen bg-gray-100 font-sans relative">
+        <div className="flex h-screen overflow-hidden bg-gray-100 font-sans relative">
             <EmployeeSidebar className="hidden md:flex" />
 
             <div className="flex-1 flex flex-col h-screen overflow-hidden">
@@ -586,13 +644,18 @@ const LogTime = () => {
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-2xl font-bold text-gray-800">My Work Logs & QT</h2>
                         <div className="flex gap-2">
-                            <DownloadDropdown
-                                data={filteredLogs}
-                                fileName="My_Work_Logs"
-                                columns={downloadColumns}
-                            />
+                            {user?.role === "Super Admin" && (
+                                <DownloadDropdown
+                                    data={filteredLogs}
+                                    fileName="My_Work_Logs"
+                                    columns={downloadColumns}
+                                />
+                            )}
                             <button
-                                onClick={() => setShowForm(true)}
+                                onClick={() => {
+                                    setEditingLog(null);
+                                    setShowForm(true);
+                                }}
                                 className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm"
                             >
                                 <FaPlus /> Quick Task
@@ -603,7 +666,7 @@ const LogTime = () => {
                     {/* Filter Navbar */}
                     <div className="bg-white rounded-xl shadow-sm p-4 mb-6 flex flex-wrap items-end gap-4 border border-gray-100">
                         <div className="flex-1 min-w-[150px]">
-                            <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">From Date</label>
+                            <label className="text-[10px] font-extrabold text-gray-500 uppercase mb-1.5 block tracking-wider">From Date</label>
                             <div className="relative">
                                 <input
                                     type="date"
@@ -616,7 +679,7 @@ const LogTime = () => {
                         </div>
 
                         <div className="flex-1 min-w-[150px]">
-                            <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">To Date</label>
+                            <label className="text-[10px] font-extrabold text-gray-500 uppercase mb-1.5 block tracking-wider">To Date</label>
                             <div className="relative">
                                 <input
                                     type="date"
@@ -638,25 +701,7 @@ const LogTime = () => {
                             />
                         </div>
 
-                        <div className="flex-1 min-w-[180px]">
-                            <CustomDropdown
-                                label="Owner"
-                                options={['All Owners', ...filterOptions.owners]}
-                                value={filters.taskOwner === "" ? 'All Owners' : filters.taskOwner}
-                                onChange={(val) => handleFilterChange('taskOwner', val === 'All Owners' ? "" : val)}
-                                placeholder="All Owners"
-                            />
-                        </div>
 
-                        <div className="flex-1 min-w-[180px]">
-                            <CustomDropdown
-                                label="Type"
-                                options={['All Types', ...filterOptions.types]}
-                                value={filters.taskType === "" ? 'All Types' : filters.taskType}
-                                onChange={(val) => handleFilterChange('taskType', val === 'All Types' ? "" : val)}
-                                placeholder="All Types"
-                            />
-                        </div>
 
                         <div className="flex-1 min-w-[180px]">
                             <CustomDropdown
@@ -668,27 +713,47 @@ const LogTime = () => {
                             />
                         </div>
 
-                        <div className="flex-none pb-[1px]">
+                        <div className="flex-none pb-[1px] flex gap-2 w-full justify-end mt-2">
                             <button
-                                onClick={() => setFilters({ fromDate: "", toDate: "", projectName: "", taskOwner: "", taskType: "", status: "" })}
-                                className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 p-3 rounded-full transition-all shadow-sm active:scale-95 flex items-center justify-center transform hover:rotate-180 duration-500"
+                                onClick={() => {
+                                    const tStr = new Date().toISOString().split('T')[0];
+                                    const defaultFilters = { fromDate: "", toDate: "", projectName: "", taskOwner: "", taskType: "", status: "" };
+                                    const defaultApplied = { fromDate: tStr, toDate: tStr, projectName: "", taskOwner: "", taskType: "", status: "" };
+                                    setFilters(defaultFilters);
+                                    setAppliedFilters(defaultApplied);
+                                }}
+                                className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 px-4 py-2.5 rounded-lg transition-all shadow-sm active:scale-95 flex items-center justify-center font-bold"
                                 title="Reset Filters"
                             >
                                 <FaRedo className="text-sm" />
+                            </button>
+                            <button
+                                onClick={() => setAppliedFilters({ ...filters })}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-lg text-sm font-bold transition flex items-center gap-2 shadow-sm active:scale-95"
+                            >
+                                <FaSearch className="text-xs" /> Fetch Data
                             </button>
                         </div>
                     </div>
 
                     {/* Sidebar Form Overlay */}
-                    <div className={`fixed inset-y-0 right-0 w-[410px] bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${showForm ? 'translate-x-0' : 'translate-x-full'}`}>
-                        <QuickTaskForm
-                            user={user}
-                            onClose={() => setShowForm(false)}
-                            onSuccess={() => {
-                                fetchRecentLogs();
-                                setShowForm(false);
-                            }}
-                        />
+                    <div className={`fixed inset-y-0 right-0 w-[460px] bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${showForm ? 'translate-x-0' : 'translate-x-full'}`}>
+                        {showForm && (
+                            <QuickTaskForm
+                                key={editingLog ? editingLog._id : 'new-form'}
+                                user={user}
+                                editLog={editingLog}
+                                onClose={() => {
+                                    setShowForm(false);
+                                    setEditingLog(null);
+                                }}
+                                onSuccess={() => {
+                                    fetchRecentLogs();
+                                    setShowForm(false);
+                                    setEditingLog(null);
+                                }}
+                            />
+                        )}
                     </div>
 
                     {/* Full Width Table View with Grouping */}
@@ -702,11 +767,23 @@ const LogTime = () => {
                             </div>
                         ) : (
                             sortedDates.map(date => {
-                                // Calculate total duration for this group
-                                const groupTotalMinutes = groupedLogs[date].reduce((acc, log) => {
-                                    const durationStr = log.timeAutomation || log.duration || calculateDurationStr(log.startTime, log.endTime);
-                                    return acc + parseDurationToMinutes(durationStr);
-                                }, 0);
+                                // Calculate categorized durations for this group
+                                const groupMetrics = groupedLogs[date].reduce((acc, log) => {
+                                    const durationStr = log.duration || log.timeAutomation || calculateDurationStr(log.startTime, log.endTime);
+                                    const mins = parseDurationToMinutes(durationStr);
+
+                                    acc.total += mins;
+
+                                    if (log.logType === 'Meeting') {
+                                        acc.meeting += mins;
+                                    } else if (["QT Task", "QT", "Quick"].includes(log.logType)) {
+                                        acc.qt += mins;
+                                    } else {
+                                        acc.main += mins;
+                                    }
+
+                                    return acc;
+                                }, { total: 0, meeting: 0, qt: 0, main: 0 });
 
                                 return (
                                     <div key={date} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -718,9 +795,23 @@ const LogTime = () => {
                                                 </h3>
                                                 <span className="text-xs text-gray-400 font-medium">({groupedLogs[date].length} tasks)</span>
                                             </div>
-                                            <div className="bg-indigo-50 px-3 py-1 rounded text-xs">
-                                                <span className="text-indigo-500 font-semibold mr-1">Log Hrs:</span>
-                                                <span className="text-indigo-700 font-bold">{formatTotalDuration(groupTotalMinutes)}</span>
+                                            <div className="flex flex-wrap gap-2 md:gap-3">
+                                                <div className="bg-purple-50 px-3 py-1 rounded text-xs border border-purple-100 shadow-sm">
+                                                    <span className="text-purple-500 font-semibold mr-1">QT Hrs:</span>
+                                                    <span className="text-purple-700 font-bold">{formatTotalDuration(groupMetrics.qt)}</span>
+                                                </div>
+                                                <div className="bg-teal-50 px-3 py-1 rounded text-xs border border-teal-100 shadow-sm">
+                                                    <span className="text-teal-500 font-semibold mr-1">Meeting Hrs:</span>
+                                                    <span className="text-teal-700 font-bold">{formatTotalDuration(groupMetrics.meeting)}</span>
+                                                </div>
+                                                <div className="bg-blue-50 px-3 py-1 rounded text-xs border border-blue-100 shadow-sm">
+                                                    <span className="text-blue-500 font-semibold mr-1">Main Task Hrs:</span>
+                                                    <span className="text-blue-700 font-bold">{formatTotalDuration(groupMetrics.main)}</span>
+                                                </div>
+                                                <div className="bg-indigo-50 px-3 py-1 rounded text-xs border border-indigo-100 shadow-sm">
+                                                    <span className="text-indigo-500 font-semibold mr-1">Total Hrs:</span>
+                                                    <span className="text-indigo-700 font-bold">{formatTotalDuration(groupMetrics.total)}</span>
+                                                </div>
                                             </div>
                                         </div>
 
@@ -731,16 +822,19 @@ const LogTime = () => {
                                                         <th className="p-4 font-semibold w-[8%] text-center text-gray-400">Task No</th>
                                                         <th className="p-4 font-semibold w-[10%]">Assigned By</th>
                                                         <th className="p-4 font-semibold w-[15%]">Project</th>
-                                                        <th className="p-4 font-semibold w-[28%]">Description</th>
-                                                        <th className="p-4 font-semibold w-[10%]">Time & Duration</th>
-                                                        <th className="p-4 font-semibold w-[10%] text-center">Status</th>
+                                                        <th className="p-4 font-semibold w-[20%]">Description</th>
+                                                        <th className="p-4 font-semibold w-[12%]">Time & Duration</th>
+                                                        <th className="p-4 font-semibold w-[8%] text-center">Status</th>
                                                         <th className="p-4 font-semibold w-[8%] text-center">Type</th>
+                                                        {date === new Date().toISOString().split('T')[0] && (
+                                                            <th className="p-4 font-semibold w-[6%] text-center text-indigo-500">Edit</th>
+                                                        )}
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-gray-50">
                                                     {groupedLogs[date]
                                                         .map((log, index) => {
-                                                            const displayDuration = log.timeAutomation || log.duration || calculateDurationStr(log.startTime, log.endTime);
+                                                            const displayDuration = log.duration || log.timeAutomation || calculateDurationStr(log.startTime, log.endTime);
                                                             const displayTaskNo = (log.taskNo || "0").toString().padStart(2, '0');
 
                                                             return (
@@ -750,7 +844,13 @@ const LogTime = () => {
                                                                     onClick={() => handleActionClick(log, index)}
                                                                 >
                                                                     <td className="p-4 text-xs font-bold text-gray-400 text-center">
-                                                                        {displayTaskNo}
+                                                                        <div className="flex flex-col justify-center items-center gap-1.5 mt-1">
+                                                                            <span>{displayTaskNo}</span>
+                                                                            <span
+                                                                                className={`w-2 h-2 shrink-0 rounded-[2px] ${log.isPendingOffline || log.logType === 'Offline Task' ? 'bg-red-500' : 'bg-green-500'}`}
+                                                                                title={log.isPendingOffline ? 'Offline Task Pending' : log.logType === 'Offline Task' ? 'Offline Task' : 'Online Task'}
+                                                                            ></span>
+                                                                        </div>
                                                                     </td>
 
                                                                     {/* Assigned By */}
@@ -777,14 +877,6 @@ const LogTime = () => {
                                                                     {/* Description */}
                                                                     <td className="p-4">
                                                                         <div className="flex flex-col gap-1">
-                                                                            <span className={`self-start text-[10px] font-bold px-2 py-0.5 rounded shadow-sm ${log.isPendingOffline
-                                                                                ? 'bg-gray-100 text-gray-500 border border-gray-200 animate-pulse'
-                                                                                : log.logType === 'Offline Task'
-                                                                                    ? 'bg-amber-100 text-amber-700 border border-amber-200'
-                                                                                    : 'bg-blue-50 text-blue-600 border border-blue-100'
-                                                                                }`}>
-                                                                                {log.isPendingOffline ? 'Offline Task Pending' : log.logType === 'Offline Task' ? 'Offline Task' : 'Online Task'}
-                                                                            </span>
                                                                             <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed" title={log.description}>
                                                                                 {log.description}
                                                                             </p>
@@ -863,12 +955,13 @@ const LogTime = () => {
                                                                                     <span
                                                                                         onClick={(e) => {
                                                                                             e.stopPropagation();
-                                                                                            if (isCompleted) {
+                                                                                            // Allow opening if it's today's log even if completed (so they can Edit)
+                                                                                            if (isCompleted && log.date !== new Date().toISOString().split('T')[0]) {
                                                                                                 return;
                                                                                             }
                                                                                             setActiveDropdownLogId(activeDropdownLogId === log._id ? null : log._id);
                                                                                         }}
-                                                                                        className={`inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${isCompleted ? 'cursor-default' : 'cursor-pointer hover:shadow-sm'} transition-all ${isRework ? 'bg-rose-50 text-rose-700 border-rose-100' :
+                                                                                        className={`inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${(isCompleted && log.date !== new Date().toISOString().split('T')[0]) ? 'cursor-default' : 'cursor-pointer hover:shadow-sm'} transition-all ${isRework ? 'bg-rose-50 text-rose-700 border-rose-100' :
                                                                                             isCompleted ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
                                                                                                 isHold ? 'bg-amber-50 text-amber-700 border-amber-100' :
                                                                                                     'bg-sky-50 text-sky-700 border-sky-100'
@@ -884,10 +977,28 @@ const LogTime = () => {
 
                                                                     {/* Log Type */}
                                                                     <td className="p-4 text-center">
-                                                                        <span className={`inline-block px-2 py-1 rounded text-xs font-bold border ${["QT Task", "QT", "Quick"].includes(log.logType) ? 'bg-purple-50 text-purple-700 border-purple-100' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
-                                                                            {["QT Task", "QT", "Quick"].includes(log.logType) ? "Quick" : "Main"}
+                                                                        <span className={`inline-block px-2 py-1 rounded text-xs font-bold border ${log.logType === 'Meeting' ? 'bg-teal-50 text-teal-700 border-teal-100' : ["QT Task", "QT", "Quick"].includes(log.logType) ? 'bg-purple-50 text-purple-700 border-purple-100' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
+                                                                            {log.logType === 'Meeting' ? 'Meeting' : ["QT Task", "QT", "Quick"].includes(log.logType) ? "Quick" : "Main"}
                                                                         </span>
                                                                     </td>
+
+                                                                    {/* Edit Action - ONLY FOR TODAY'S LOGS */}
+                                                                    {date === new Date().toISOString().split('T')[0] && (
+                                                                        <td className="p-4 text-center">
+                                                                            {(log.logType === 'Meeting' || ["QT Task", "QT", "Quick"].includes(log.logType)) && (
+                                                                                <button
+                                                                                    onClick={(e) => {
+                                                                                        e.stopPropagation();
+                                                                                        openEditForm(log);
+                                                                                    }}
+                                                                                    className="text-indigo-600 hover:text-indigo-800 p-2 rounded-full hover:bg-indigo-50 transition-colors tooltip flex items-center justify-center mx-auto"
+                                                                                    title="Edit Log"
+                                                                                >
+                                                                                    <FaEdit size={16} />
+                                                                                </button>
+                                                                            )}
+                                                                        </td>
+                                                                    )}
                                                                 </tr>
                                                             );
                                                         })}
@@ -964,6 +1075,8 @@ const LogTime = () => {
                     </div>
                 </div>
             )}
+
+            {/* Extracted Edit Feature Form To Sidebar */}
         </div>
     );
 };

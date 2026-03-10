@@ -5,8 +5,7 @@ import EmployeeSidebar from "../components/EmployeeSidebar";
 import TaskDetailsModal from "../components/TaskDetailsModal";
 import CustomDropdown from "../components/CustomDropdown";
 import StatusBadge from "../components/StatusBadge";
-import { FaEllipsisV, FaCheck, FaTimes, FaEye, FaTasks, FaPlus, FaCalendarAlt, FaChevronDown, FaChevronUp, FaPaperPlane, FaRedo, FaHistory, FaExclamationCircle } from "react-icons/fa";
-import DownloadDropdown from "../components/DownloadDropdown";
+import { FaSearch, FaEllipsisV, FaCheck, FaTimes, FaEye, FaTasks, FaPlus, FaCalendarAlt, FaChevronDown, FaChevronUp, FaPaperPlane, FaRedo, FaHistory, FaExclamationCircle } from "react-icons/fa";
 import TaskTimelineModal from "../components/TaskTimelineModal";
 
 import { io } from "socket.io-client";
@@ -97,6 +96,30 @@ const EmployeeTaskPage = () => {
         toDate: ""
     });
 
+    const [appliedFilters, setAppliedFilters] = useState({
+        project: "",
+        priority: "",
+        status: "",
+        fromDate: "",
+        toDate: ""
+    });
+
+    const handleFetchData = () => {
+        setAppliedFilters({ ...filters });
+    };
+
+    const handleResetFilters = () => {
+        const resetState = {
+            project: "",
+            priority: "",
+            status: "",
+            fromDate: "",
+            toDate: ""
+        };
+        setFilters(resetState);
+        setAppliedFilters(resetState);
+    };
+
     // Auto-Hold Logic State
     const [showHoldConfirmation, setShowHoldConfirmation] = useState(false);
     const [conflictingTask, setConflictingTask] = useState(null);
@@ -108,30 +131,38 @@ const EmployeeTaskPage = () => {
 
     const filteredTasks = myTasks.filter(task => {
         return (
-            (filters.project === "" || task.projectName === filters.project) &&
-            (filters.priority === "" || task.priority === filters.priority) &&
-            (filters.status === "" || task.status === filters.status) &&
-            (filters.fromDate === "" || new Date(task.startDate) >= new Date(filters.fromDate)) &&
-            (filters.toDate === "" || new Date(task.startDate) <= new Date(filters.toDate))
+            (appliedFilters.project === "" || task.projectName === appliedFilters.project) &&
+            (appliedFilters.priority === "" || task.priority === appliedFilters.priority) &&
+            (appliedFilters.status === "" || task.status === appliedFilters.status) &&
+            (appliedFilters.fromDate === "" || new Date(task.startDate) >= new Date(appliedFilters.fromDate)) &&
+            (appliedFilters.toDate === "" || new Date(task.startDate) <= new Date(appliedFilters.toDate))
         );
     });
 
-    const getDateLabel = (dateString) => {
-        if (!dateString) return "No Date";
-        const date = new Date(dateString);
-        const today = new Date();
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-
-        const formatDate = (d) => {
-            return d.getDate().toString().padStart(2, '0') + '-' +
-                (d.getMonth() + 1).toString().padStart(2, '0') + '-' +
-                d.getFullYear();
+    const getDateLabel = (dateStr) => {
+        if (!dateStr) return "No Date";
+        const getLocalDateString = (d) => {
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
         };
 
-        if (formatDate(date) === formatDate(today)) return `Today (${formatDate(date)})`;
-        if (formatDate(date) === formatDate(yesterday)) return `Yesterday (${formatDate(date)})`;
-        return formatDate(date);
+        const today = getLocalDateString(new Date());
+        const yesterdayDate = new Date();
+        yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+        const yesterday = getLocalDateString(yesterdayDate);
+
+        const taskDateStr = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+
+        if (taskDateStr === today) return "TODAY";
+        if (taskDateStr === yesterday) return "YESTERDAY";
+
+        if (taskDateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            const [y, m, d] = taskDateStr.split('-');
+            return `${d}-${m}-${y}`;
+        }
+        return taskDateStr;
     };
 
     const sortedTasks = [...filteredTasks].sort((a, b) => new Date(b.startDate) - new Date(a.startDate));
@@ -464,8 +495,8 @@ const EmployeeTaskPage = () => {
             taskOwner: Array.isArray(logFormData.taskOwner) ? logFormData.taskOwner.join(", ") : logFormData.taskOwner,
             description: logFormData.description,
             taskType: Array.isArray(logFormData.taskType) ? logFormData.taskType.join(", ") : logFormData.taskType,
-            timeAutomation: logFormData.timeAutomation,
-            duration: logFormData.timeAutomation,
+            timeAutomation: logFormData.duration || logFormData.timeAutomation,
+            duration: logFormData.duration || logFormData.timeAutomation,
             status: logFormData.status,
             taskTitle: Array.isArray(logFormData.projectName) ? logFormData.projectName.join(", ") : logFormData.projectName
         };
@@ -873,11 +904,6 @@ const EmployeeTaskPage = () => {
                                 My Tasks
                             </h2>
                             <div className="flex gap-2">
-                                <DownloadDropdown
-                                    data={filteredTasks}
-                                    fileName="My_Tasks"
-                                    columns={downloadColumns}
-                                />
                                 <button
                                     onClick={() => setShowLogForm(true)}
                                     className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm"
@@ -888,233 +914,258 @@ const EmployeeTaskPage = () => {
                         </div>
 
                         {/* Filter Navbar */}
-                        <div className="bg-white rounded-xl shadow-sm p-4 mb-6 flex flex-wrap items-end gap-4 border border-gray-100">
-                            {/* From Date */}
-                            <div className="flex-1 min-w-[150px]">
-                                <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">From Date</label>
-                                <div className="relative">
-                                    <input
-                                        type="date"
-                                        value={filters.fromDate}
-                                        onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })}
-                                        className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 hover:bg-white text-gray-700 font-medium"
+                        <div className="bg-white rounded-xl shadow-sm p-4 mb-6 border border-gray-100">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
+                                {/* From Date */}
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">From Date</label>
+                                    <div className="relative">
+                                        <input
+                                            type="date"
+                                            value={filters.fromDate}
+                                            onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })}
+                                            className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 hover:bg-white text-gray-700 font-medium"
+                                        />
+                                        <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                                    </div>
+                                </div>
+
+                                {/* To Date */}
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">To Date</label>
+                                    <div className="relative">
+                                        <input
+                                            type="date"
+                                            value={filters.toDate}
+                                            onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
+                                            className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 hover:bg-white text-gray-700 font-medium"
+                                        />
+                                        <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                                    </div>
+                                </div>
+
+                                {/* Project Filter */}
+                                <div>
+                                    <CustomDropdown
+                                        label="Project"
+                                        value={filters.project}
+                                        onChange={(val) => setFilters({ ...filters, project: val })}
+                                        options={[
+                                            { value: "", label: "All Projects" },
+                                            ...uniqueProjects.map(p => ({ value: p, label: p }))
+                                        ]}
+                                        placeholder="All Projects"
                                     />
-                                    <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                                </div>
+
+                                {/* Priority Filter */}
+                                <div>
+                                    <CustomDropdown
+                                        label="Priority"
+                                        value={filters.priority}
+                                        onChange={(val) => setFilters({ ...filters, priority: val })}
+                                        options={[
+                                            { value: "", label: "All Priorities" },
+                                            { value: "High", label: "High" },
+                                            { value: "Medium", label: "Medium" },
+                                            { value: "Low", label: "Low" }
+                                        ]}
+                                        placeholder="All Priorities"
+                                    />
+                                </div>
+
+                                {/* Status Filter */}
+                                <div>
+                                    <CustomDropdown
+                                        label="Status"
+                                        value={filters.status}
+                                        onChange={(val) => setFilters({ ...filters, status: val })}
+                                        options={[
+                                            { value: "", label: "All Statuses" },
+                                            { value: "In Progress", label: "In Progress" },
+                                            { value: "Hold", label: "Hold" },
+                                            { value: "Completed", label: "Completed" }
+                                        ]}
+                                        placeholder="All Statuses"
+                                    />
                                 </div>
                             </div>
 
-                            {/* To Date */}
-                            <div className="flex-1 min-w-[150px]">
-                                <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">To Date</label>
-                                <div className="relative">
-                                    <input
-                                        type="date"
-                                        value={filters.toDate}
-                                        onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
-                                        className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 hover:bg-white text-gray-700 font-medium"
-                                    />
-                                    <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
-                                </div>
-                            </div>
-
-                            {/* Project Filter */}
-                            <div className="flex-1 min-w-[180px]">
-                                <CustomDropdown
-                                    label="Project"
-                                    value={filters.project}
-                                    onChange={(val) => setFilters({ ...filters, project: val })}
-                                    options={[
-                                        { value: "", label: "All Projects" },
-                                        ...uniqueProjects.map(p => ({ value: p, label: p }))
-                                    ]}
-                                    placeholder="All Projects"
-                                />
-                            </div>
-
-                            {/* Priority Filter */}
-                            <div className="flex-1 min-w-[150px]">
-                                <CustomDropdown
-                                    label="Priority"
-                                    value={filters.priority}
-                                    onChange={(val) => setFilters({ ...filters, priority: val })}
-                                    options={[
-                                        { value: "", label: "All Priorities" },
-                                        { value: "High", label: "High" },
-                                        { value: "Medium", label: "Medium" },
-                                        { value: "Low", label: "Low" }
-                                    ]}
-                                    placeholder="All Priorities"
-                                />
-                            </div>
-
-                            {/* Status Filter */}
-                            <div className="flex-1 min-w-[150px]">
-                                <CustomDropdown
-                                    label="Status"
-                                    value={filters.status}
-                                    onChange={(val) => setFilters({ ...filters, status: val })}
-                                    options={[
-                                        { value: "", label: "All Statuses" },
-                                        { value: "In Progress", label: "In Progress" },
-                                        { value: "Hold", label: "Hold" },
-                                        { value: "Completed", label: "Completed" }
-                                    ]}
-                                    placeholder="All Statuses"
-                                />
-                            </div>
-
-                            {/* Reset Filters */}
-                            <div className="flex-none pb-[1px]">
+                            <div className="flex justify-end gap-3 mt-4">
+                                {/* Reset Filters */}
                                 <button
-                                    onClick={() => setFilters({ project: "", priority: "", status: "", fromDate: "", toDate: "" })}
-                                    className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 p-3 rounded-full transition-all shadow-sm active:scale-95 flex items-center justify-center transform hover:rotate-180 duration-500"
+                                    onClick={handleResetFilters}
+                                    className="w-10 h-10 bg-red-50 text-red-600 rounded-lg flex items-center justify-center hover:bg-red-100 transition-colors"
                                     title="Reset Filters"
                                 >
                                     <FaRedo className="text-sm" />
+                                </button>
+
+                                {/* Fetch Data */}
+                                <button
+                                    onClick={handleFetchData}
+                                    className="px-5 py-2 bg-indigo-600 text-white rounded-lg flex items-center gap-2 font-bold hover:bg-indigo-700 transition-colors shadow-sm"
+                                >
+                                    <FaSearch className="text-sm" /> Fetch Data
                                 </button>
                             </div>
                         </div>
                     </div>
 
-                    {/* Task Table */}
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-left border-collapse min-w-[1000px] table-fixed">
-                                <thead>
-                                    <tr className="bg-gray-50/50 text-left border-b border-gray-200">
-                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[5%] text-center">S.No</th>
-                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%]">Assigned By & To</th>
-                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%]">Project Name</th>
-                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[20%]">Title Name</th>
-                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[10%]">Priority</th>
-                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[12%]">Status</th>
-                                        <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[8%] text-center">Chats</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-100">
-                                    {sortedTasks.map((task, index) => (
-                                        <tr key={task._id}
-                                            onClick={() => setSelectedTaskForDetails(task)}
-                                            className="hover:bg-indigo-50/30 transition-all duration-200 group cursor-pointer h-20 border-l-4 border-transparent hover:border-indigo-500 bg-white"
-                                        >
-                                            {/* S.No */}
-                                            <td className="px-6 py-4 text-center text-gray-400 font-mono text-xs align-middle font-medium">
-                                                {(index + 1).toString().padStart(2, '0')}
-                                            </td>
+                    {/* Task Tables Grouped by Date */}
+                    {Object.keys(groupedTasks).map((dateLabel) => {
+                        const tasksInGroup = groupedTasks[dateLabel];
+                        return (
+                            <div key={dateLabel} className="mb-8">
+                                <h3 className="text-md font-bold text-gray-800 uppercase tracking-wider mb-4 flex items-center gap-2">
+                                    {dateLabel} <span className="text-xs font-medium text-gray-400 normal-case">({tasksInGroup.length} tasks)</span>
+                                </h3>
+                                <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left border-collapse min-w-[1000px] table-fixed">
+                                            <thead>
+                                                <tr className="bg-gray-50/50 text-left border-b border-gray-200">
+                                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[5%] text-center">S.No</th>
+                                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%]">Assigned By & To</th>
+                                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%]">Project Name</th>
+                                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[20%]">Description</th>
+                                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[10%]">Priority</th>
+                                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[12%]">Status</th>
+                                                    <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[8%] text-center">Chats</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-100">
+                                                {tasksInGroup.map((task, index) => (
+                                                    <tr key={task._id}
+                                                        onClick={() => setSelectedTaskForDetails(task)}
+                                                        className="hover:bg-indigo-50/30 transition-all duration-200 group cursor-pointer h-20 border-l-4 border-transparent hover:border-indigo-500 bg-white"
+                                                    >
+                                                        {/* S.No */}
+                                                        <td className="px-6 py-4 align-middle">
+                                                            <div className="flex flex-col items-center justify-center gap-2">
+                                                                <span className="text-gray-400 font-mono text-xs font-medium">
+                                                                    {(index + 1).toString().padStart(2, '0')}
+                                                                </span>
+                                                                <div
+                                                                    className={`w-2 h-2 rounded-sm ${task.logType === 'Offline Task' || task.isPendingOffline ? 'bg-red-500' : 'bg-emerald-500'}`}
+                                                                    title={task.logType === 'Offline Task' || task.isPendingOffline ? 'Offline Task' : 'Online Task'}
+                                                                ></div>
+                                                            </div>
+                                                        </td>
 
-                                            {/* Assigned By & To */}
-                                            <td className="px-6 py-4 align-middle">
-                                                <div className="flex flex-col gap-1.5">
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="text-[10px] uppercase font-bold text-gray-400 w-6">By:</span>
-                                                        <span className="text-xs font-bold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full truncate max-w-[120px]" title={task.assignedBy?.name}>
-                                                            {task.assignedBy?.name || "Super Admin"}
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="text-[10px] uppercase font-bold text-gray-400 w-6">To:</span>
-                                                        <div className="text-sm font-semibold text-indigo-900 truncate max-w-[150px]" title={(() => {
-                                                            if (!task.assignedTo || task.assignedTo.length === 0) return "Unassigned";
-                                                            return task.assignedTo.map(assigneeId => {
-                                                                // Handle both populated objects and ID strings (just in case)
-                                                                if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
-                                                                const emp = employees.find(e => e._id === assigneeId);
-                                                                return emp ? emp.name : "Unknown";
-                                                            }).join(", ");
-                                                        })()}>
-                                                            {(() => {
-                                                                if (!task.assignedTo || task.assignedTo.length === 0) return <span className="text-gray-400 italic text-xs">Unassigned</span>;
-                                                                return task.assignedTo.map(assigneeId => {
-                                                                    if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
-                                                                    const emp = employees.find(e => e._id === assigneeId);
-                                                                    return emp ? emp.name : "Unknown";
-                                                                }).join(", ");
-                                                            })()}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </td>
+                                                        {/* Assigned By & To */}
+                                                        <td className="px-6 py-4 align-middle">
+                                                            <div className="flex flex-col gap-1.5">
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-[10px] uppercase font-bold text-gray-400 w-6">By:</span>
+                                                                    <span className="text-xs font-bold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full truncate max-w-[120px]" title={task.assignedBy?.name}>
+                                                                        {task.assignedBy?.name || "Super Admin"}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-[10px] uppercase font-bold text-gray-400 w-6">To:</span>
+                                                                    <div className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full truncate max-w-[150px]" title={(() => {
+                                                                        let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
+                                                                        if (!targets || targets.length === 0) {
+                                                                            return task.assignType === "Overall" ? "Overall (All)" : "Unassigned";
+                                                                        }
+                                                                        return targets.map(assigneeId => {
+                                                                            if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
+                                                                            const emp = employees.find(e => e._id === assigneeId);
+                                                                            return emp ? emp.name : assigneeId;
+                                                                        }).join(", ");
+                                                                    })()}>
+                                                                        {(() => {
+                                                                            let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
+                                                                            if (!targets || targets.length === 0) {
+                                                                                return <span className="text-gray-400 italic text-xs">{task.assignType === "Overall" ? "Overall (All)" : "Unassigned"}</span>;
+                                                                            }
+                                                                            return targets.map(assigneeId => {
+                                                                                if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
+                                                                                const emp = employees.find(e => e._id === assigneeId);
+                                                                                return emp ? emp.name : assigneeId;
+                                                                            }).join(", ");
+                                                                        })()}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </td>
 
-                                            {/* Project Name */}
-                                            <td className="px-6 py-4 text-sm font-bold text-gray-800 truncate align-middle" title={task.projectName}>
-                                                {task.projectName}
-                                            </td>
+                                                        {/* Project Name */}
+                                                        <td className="px-6 py-4 text-sm font-bold text-gray-800 truncate align-middle" title={task.projectName}>
+                                                            {task.projectName}
+                                                        </td>
 
-                                            {/* Title Name */}
-                                            <td className="px-6 py-4 align-middle">
-                                                <div className="flex flex-col gap-1">
-                                                    <span className={`self-start text-[10px] font-bold px-2 py-0.5 rounded shadow-sm ${task.isPendingOffline
-                                                        ? 'bg-gray-100 text-gray-500 border border-gray-200 animate-pulse'
-                                                        : task.logType === 'Offline Task'
-                                                            ? 'bg-amber-100 text-amber-700 border border-amber-200'
-                                                            : 'bg-blue-50 text-blue-600 border border-blue-100'
-                                                        }`}>
-                                                        {task.isPendingOffline ? 'Offline Task Pending' : task.logType === 'Offline Task' ? 'Offline Task' : 'Online Task'}
-                                                    </span>
-                                                    <span className="text-sm font-medium text-gray-600 truncate" title={task.taskTitle}>
-                                                        {task.taskTitle}
-                                                    </span>
-                                                </div>
-                                            </td>
+                                                        {/* Description */}
+                                                        <td className="px-6 py-4 align-middle">
+                                                            <div className="flex flex-col gap-1">
+                                                                <span className="text-sm font-medium text-gray-600 line-clamp-2" title={task.description}>
+                                                                    {task.description || "—"}
+                                                                </span>
+                                                            </div>
+                                                        </td>
 
-                                            {/* Priority */}
-                                            <td className="px-6 py-4 align-middle">
-                                                <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold shadow-sm border ${task.priority === "High" ? "bg-rose-50 text-rose-600 border-rose-100" :
-                                                    task.priority === "Medium" ? "bg-amber-50 text-amber-600 border-amber-100" :
-                                                        "bg-emerald-50 text-emerald-600 border-emerald-100"
-                                                    }`}>
-                                                    {task.priority === "High" && <FaExclamationCircle className="mr-1.5 text-[10px]" />}
-                                                    {task.priority || "Normal"}
-                                                </span>
-                                            </td>
+                                                        {/* Priority */}
+                                                        <td className="px-6 py-4 align-middle">
+                                                            <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold shadow-sm border ${task.priority === "High" ? "bg-rose-50 text-rose-600 border-rose-100" :
+                                                                task.priority === "Medium" ? "bg-amber-50 text-amber-600 border-amber-100" :
+                                                                    "bg-emerald-50 text-emerald-600 border-emerald-100"
+                                                                }`}>
+                                                                {task.priority === "High" && <FaExclamationCircle className="mr-1.5 text-[10px]" />}
+                                                                {task.priority || "Normal"}
+                                                            </span>
+                                                        </td>
 
-                                            {/* Status - Interactive */}
-                                            <td className="px-6 py-4 align-middle">
-                                                <div onClick={(e) => e.stopPropagation()}>
-                                                    {task.status === "Completed" ? (
-                                                        <button
-                                                            onClick={() => setReworkConfirmationId(task._id)}
-                                                            className="flex items-center justify-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-700 w-full hover:bg-emerald-200 transition-colors shadow-sm border border-emerald-200"
-                                                            title="Click to Rework"
-                                                        >
-                                                            <FaCheck className="text-emerald-500 size-3" /> Completed
-                                                        </button>
-                                                    ) : (
-                                                        <StatusBadge
-                                                            status={task.status}
-                                                            onChange={(val) => handleStatusChange(task._id, val)}
-                                                        />
-                                                    )}
-                                                </div>
-                                            </td>
+                                                        {/* Status - Interactive */}
+                                                        <td className="px-6 py-4 align-middle">
+                                                            <div onClick={(e) => e.stopPropagation()}>
+                                                                {task.status === "Completed" ? (
+                                                                    <button
+                                                                        onClick={() => setReworkConfirmationId(task._id)}
+                                                                        className="flex items-center justify-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-700 w-full hover:bg-emerald-200 transition-colors shadow-sm border border-emerald-200"
+                                                                        title="Click to Rework"
+                                                                    >
+                                                                        <FaCheck className="text-emerald-500 size-3" /> Completed
+                                                                    </button>
+                                                                ) : (
+                                                                    <StatusBadge
+                                                                        status={task.status}
+                                                                        onChange={(val) => handleStatusChange(task._id, val)}
+                                                                    />
+                                                                )}
+                                                            </div>
+                                                        </td>
 
-                                            {/* Chats */}
-                                            <td className="px-6 py-4 text-center align-middle">
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleChatClick(task._id); }}
-                                                    className="inline-flex items-center justify-center h-9 w-9 text-indigo-500 bg-white border border-gray-200 hover:bg-indigo-50 hover:text-indigo-600 rounded-full transition-all shadow-sm hover:shadow active:scale-95 group-hover:border-indigo-200"
-                                                    title="Open Chat"
-                                                >
-                                                    <FaPaperPlane size={14} />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        {/* No tasks empty state */}
-                        {sortedTasks.length === 0 && (
-                            <div className="text-center py-16">
-                                <div className="bg-gray-50 rounded-full h-16 w-16 flex items-center justify-center mx-auto mb-4">
-                                    <FaTasks className="text-gray-300 text-2xl" />
+                                                        {/* Chats */}
+                                                        <td className="px-6 py-4 text-center align-middle">
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); handleChatClick(task._id); }}
+                                                                className="inline-flex items-center justify-center h-9 w-9 text-indigo-500 bg-white border border-gray-200 hover:bg-indigo-50 hover:text-indigo-600 rounded-full transition-all shadow-sm hover:shadow active:scale-95 group-hover:border-indigo-200"
+                                                                title="Open Chat"
+                                                            >
+                                                                <FaPaperPlane size={14} />
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
-                                <h3 className="text-lg font-bold text-gray-800 mb-1">No tasks found</h3>
-                                <p className="text-gray-500 text-sm">No tasks match your selected filters.</p>
                             </div>
-                        )}
-                    </div>
+                        );
+                    })}
+
+                    {/* No tasks empty state */}
+                    {Object.keys(groupedTasks).length === 0 && (
+                        <div className="text-center py-16 bg-white rounded-xl shadow-sm border border-gray-100 mb-8">
+                            <div className="bg-gray-50 rounded-full h-16 w-16 flex items-center justify-center mx-auto mb-4">
+                                <FaTasks className="text-gray-300 text-2xl" />
+                            </div>
+                            <h3 className="text-lg font-bold text-gray-800 mb-1">No tasks found</h3>
+                            <p className="text-gray-500 text-sm">No tasks match your selected filters.</p>
+                        </div>
+                    )}
                 </main >
             </div >
 
@@ -1129,7 +1180,7 @@ const EmployeeTaskPage = () => {
             }
 
             {/* Sidebar Form Overlay */}
-            <div className={`fixed inset-y-0 right-0 w-[410px] bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${showLogForm ? 'translate-x-0' : 'translate-x-full'}`}>
+            <div className={`fixed inset-y-0 right-0 w-[500px] bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${showLogForm ? 'translate-x-0' : 'translate-x-full'}`}>
                 <QuickTaskForm
                     key={showLogForm ? 'open' : 'closed'}
                     user={user}

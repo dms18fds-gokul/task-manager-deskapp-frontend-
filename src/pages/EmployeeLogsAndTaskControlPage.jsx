@@ -202,8 +202,7 @@ const EmployeeLogsAndTaskControlPage = () => {
                                             <th className="px-6 py-4 font-bold">Full Name</th>
                                             <th className="px-6 py-4 font-bold">Email Address</th>
                                             <th className="px-6 py-4 font-bold">Department</th>
-                                            <th className="px-6 py-4 font-bold">Role</th>
-                                            <th className="px-6 py-4 font-bold">Work Type</th>
+
                                             <th className="px-6 py-4 font-bold text-center">QT Activity</th>
                                             <th className="px-6 py-4 font-bold text-center">Task Activity</th>
                                         </tr>
@@ -233,16 +232,7 @@ const EmployeeLogsAndTaskControlPage = () => {
                                                         ))}
                                                     </div>
                                                 </td>
-                                                <td className="px-6 py-4 align-middle">
-                                                    <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-1 rounded-md">
-                                                        {emp.designation || "-"}
-                                                    </span>
-                                                </td>
-                                                <td className="px-6 py-4 align-middle">
-                                                    <span className="text-xs font-semibold text-slate-600">
-                                                        {emp.workType || "-"}
-                                                    </span>
-                                                </td>
+
 
                                                 {/* Action Columns */}
                                                 <td className="px-6 py-4 align-middle text-center">

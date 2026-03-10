@@ -157,7 +157,7 @@ const DeviceRamTable = () => {
     };
 
     return (
-        <div className="flex bg-gray-50 min-h-screen font-sans">
+        <div className="flex h-screen overflow-hidden bg-gray-50 font-sans">
             {/* Sidebar */}
             <Sidebar className="hidden md:flex flex-col w-64 fixed h-full shadow-xl z-20" />
 

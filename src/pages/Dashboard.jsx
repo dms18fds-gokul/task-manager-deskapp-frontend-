@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import StatCard from "../components/StatCard";
 import TaskDetailsModal from "../components/TaskDetailsModal";
 import CustomDropdown from "../components/CustomDropdown";
-import { FaUsers, FaProjectDiagram, FaTasks, FaClipboardList, FaCheckCircle, FaEllipsisV, FaEye, FaUserTag, FaEnvelope, FaIdCard, FaUser, FaCalendarAlt, FaExclamationCircle, FaTimes, FaCheck, FaHistory, FaRedo } from "react-icons/fa";
+import TableLoader from "../components/TableLoader";
+import { FaUsers, FaProjectDiagram, FaTasks, FaClipboardList, FaCheckCircle, FaEllipsisV, FaEye, FaUserTag, FaEnvelope, FaIdCard, FaUser, FaCalendarAlt, FaExclamationCircle, FaTimes, FaCheck, FaHistory, FaRedo, FaSearch, FaPaperPlane, FaUserCheck } from "react-icons/fa";
 import { MdPendingActions, MdCheckCircle, MdCancel, MdDateRange } from "react-icons/md";
 import io from "socket.io-client";
 import { API_URL, getSocketUrl } from "../utils/config";
@@ -15,7 +16,7 @@ const formatDuration = (ms) => {
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
-    return `${hours}h ${minutes}m ${seconds}s`;
+    return `${hours}h ${minutes}m ${seconds} s`;
 };
 
 const formatHHMMSS = (totalSeconds) => {
@@ -28,6 +29,15 @@ const formatHHMMSS = (totalSeconds) => {
         minutes.toString().padStart(2, '0'),
         seconds.toString().padStart(2, '0')
     ].join(':');
+};
+
+const addTimes = (time1, time2) => {
+    const parse = (t) => {
+        if (!t || t === "-" || t === "00:00:00") return 0;
+        const [h, m, s] = t.split(':').map(Number);
+        return (h || 0) * 3600 + (m || 0) * 60 + (s || 0);
+    };
+    return formatHHMMSS(parse(time1) + parse(time2));
 };
 
 const calculateDayHours = (login, logout) => {
@@ -44,6 +54,57 @@ const calculateWorkingHours = (login, logout, lunchStart, lunchEnd) => {
     return formatDuration(total);
 };
 
+const calculateInactiveHours = (activeTimeStr, idleTimeStr) => {
+    const parseTimeToHours = (timeStr) => {
+        if (!timeStr) return 0;
+        const [h, m, s] = timeStr.split(':').map(Number);
+        return h + (m / 60) + (s / 3600);
+    };
+
+    const activeH = parseTimeToHours(activeTimeStr);
+    const idleH = parseTimeToHours(idleTimeStr);
+
+    const inactiveH = 24 - (activeH + idleH);
+    if (inactiveH <= 0 || isNaN(inactiveH)) return "00:00:00";
+
+    const hrs = Math.floor(inactiveH);
+    const mins = Math.floor((inactiveH - hrs) * 60);
+    const secs = Math.floor(Math.round((inactiveH - hrs - mins / 60) * 3600));
+
+    return [
+        hrs.toString().padStart(2, '0'),
+        mins.toString().padStart(2, '0'),
+        secs.toString().padStart(2, '0')
+    ].join(':');
+};
+
+const LiveDuration = ({ loginTime, logoutTime }) => {
+    const [duration, setDuration] = useState("00:00:00");
+
+    useEffect(() => {
+        if (!loginTime) {
+            setDuration("00:00:00");
+            return;
+        }
+
+        const updateDate = () => {
+            const start = new Date(loginTime).getTime();
+            const end = logoutTime ? new Date(logoutTime).getTime() : new Date().getTime();
+            const diff = Math.floor((end - start) / 1000);
+            setDuration(formatHHMMSS(diff > 0 ? diff : 0));
+        };
+
+        updateDate();
+
+        if (logoutTime) return;
+
+        const interval = setInterval(updateDate, 1000);
+        return () => clearInterval(interval);
+    }, [loginTime, logoutTime]);
+
+    return <span>{duration}</span>;
+};
+
 const Dashboard = () => {
     const navigate = useNavigate();
     const [user, setUser] = useState(null);
@@ -51,6 +112,25 @@ const Dashboard = () => {
     const [employees, setEmployees] = useState([]);
     // viewMode: 'none', 'total', 'present', 'absent', 'total_projects', 'total_tasks', 'pending_tasks', 'active_tasks'
     const [viewMode, setViewMode] = useState('none');
+    const [isTableLoading, setIsTableLoading] = useState(false);
+
+    const handleViewChange = (newMode) => {
+        if (newMode === viewMode) {
+            setViewMode('none');
+            return;
+        }
+
+        // Reset search filter when explicitly clicking "Total Employees" card
+        if (newMode === 'total') {
+            setEmployeeSearch("");
+            setAppliedEmployeeSearch("");
+        }
+
+        setIsTableLoading(true);
+        setViewMode(newMode);
+        setTimeout(() => setIsTableLoading(false), 800);
+    };
+
     const [stats, setStats] = useState({
         totalProjects: 0,
         totalTasks: 0,
@@ -63,6 +143,8 @@ const Dashboard = () => {
     const [openTaskDropdownId, setOpenTaskDropdownId] = useState(null);
 
     // Task Filter State
+    const todayDate = new Date().toLocaleDateString('en-CA');
+
     const [taskFilters, setTaskFilters] = useState({
         projectName: "",
         assignedTo: "",
@@ -70,15 +152,51 @@ const Dashboard = () => {
         toDate: "",
         status: ""
     });
-
-    const [employeeFilters, setEmployeeFilters] = useState({
-        employeeId: "",
-        name: "",
-        role: "", // Department
-        designation: "", // Role
-        workType: "",
-        email: ""
+    const [appliedTaskFilters, setAppliedTaskFilters] = useState({
+        projectName: "",
+        assignedTo: "",
+        fromDate: "",
+        toDate: "",
+        status: ""
     });
+
+    const [employeeSearch, setEmployeeSearch] = useState("");
+    const [appliedEmployeeSearch, setAppliedEmployeeSearch] = useState("");
+    const [isEmployeeDropdownOpen, setIsEmployeeDropdownOpen] = useState(false);
+    const searchWrapperRef = useRef(null);
+
+    const [taskEmployeeSearch, setTaskEmployeeSearch] = useState("");
+    const [isTaskEmployeeDropdownOpen, setIsTaskEmployeeDropdownOpen] = useState(false);
+    const taskSearchWrapperRef = useRef(null);
+
+    const [attendanceEmployeeSearch, setAttendanceEmployeeSearch] = useState("");
+    const [isAttendanceEmployeeDropdownOpen, setIsAttendanceEmployeeDropdownOpen] = useState(false);
+    const attendanceSearchWrapperRef = useRef(null);
+
+    const [leaveEmployeeSearch, setLeaveEmployeeSearch] = useState("");
+    const [isLeaveEmployeeDropdownOpen, setIsLeaveEmployeeDropdownOpen] = useState(false);
+    const leaveSearchWrapperRef = useRef(null);
+
+    // Close dropdown on click outside
+    useEffect(() => {
+        function handleClickOutside(event) {
+            if (searchWrapperRef.current && !searchWrapperRef.current.contains(event.target)) {
+                setIsEmployeeDropdownOpen(false);
+            }
+            if (taskSearchWrapperRef.current && !taskSearchWrapperRef.current.contains(event.target)) {
+                setIsTaskEmployeeDropdownOpen(false);
+            }
+            if (attendanceSearchWrapperRef.current && !attendanceSearchWrapperRef.current.contains(event.target)) {
+                setIsAttendanceEmployeeDropdownOpen(false);
+            }
+            if (leaveSearchWrapperRef.current && !leaveSearchWrapperRef.current.contains(event.target)) {
+                setIsLeaveEmployeeDropdownOpen(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
     const [filteredEmployees, setFilteredEmployees] = useState([]);
 
     // Leave Management State
@@ -86,18 +204,54 @@ const Dashboard = () => {
     const [pendingLeaves, setPendingLeaves] = useState([]);
     const [attendanceHistory, setAttendanceHistory] = useState([]); // New State for History
 
-    // Attendance Filters State
     const [attendanceFilters, setAttendanceFilters] = useState({
         fromDate: "",
         toDate: "",
-        name: "",
-        employeeId: "",
+        employee: "",
+        status: ""
+    });
+    const [appliedAttendanceFilters, setAppliedAttendanceFilters] = useState({
+        fromDate: "",
+        toDate: "",
+        employee: "",
         status: ""
     });
 
-    // Leave History Filters State
+    const workingHoursSummary = React.useMemo(() => {
+        const todayRecords = attendanceHistory.filter(r => r.date === todayDate && r.status === "Present" && r.employeeId);
+        let totalSeconds = 0;
+
+        const parseToSeconds = (t) => {
+            if (!t || t === "-" || t === "00:00:00") return 0;
+            const parts = t.split(':').map(Number);
+            if (parts.length !== 3) return 0;
+            const [h, m, s] = parts;
+            return (h || 0) * 3600 + (m || 0) * 60 + (s || 0);
+        };
+
+        todayRecords.forEach(r => {
+            totalSeconds += parseToSeconds(r.formattedActiveTime);
+            totalSeconds += parseToSeconds(r.meetingHours);
+        });
+
+        const hrs = Math.floor(totalSeconds / 3600);
+        const mins = Math.floor((totalSeconds % 3600) / 60);
+
+        return {
+            display: `${hrs}.${mins.toString().padStart(2, '0')} hr / ${todayRecords.length}`,
+            count: todayRecords.length
+        };
+    }, [attendanceHistory, todayDate]);
+
     const [leaveHistoryFilters, setLeaveHistoryFilters] = useState({
-        name: "",
+        employee: "",
+        fromDate: "",
+        toDate: "",
+        status: ""
+    });
+
+    const [appliedLeaveHistoryFilters, setAppliedLeaveHistoryFilters] = useState({
+        employee: "",
         fromDate: "",
         toDate: "",
         status: ""
@@ -107,22 +261,26 @@ const Dashboard = () => {
     const filteredLeaves = leaves.filter(leave => {
         let matchDate = true;
 
-        if (leaveHistoryFilters.fromDate) {
-            // Check if appliedOn exists, fallback to createdAt or check if date string is valid
+        if (appliedLeaveHistoryFilters.fromDate) {
             const d = leave.appliedOn ? new Date(leave.appliedOn) : new Date();
             const leaveDate = d.toISOString().split('T')[0];
-            matchDate = matchDate && leaveDate >= leaveHistoryFilters.fromDate;
+            matchDate = matchDate && leaveDate >= appliedLeaveHistoryFilters.fromDate;
         }
-        if (leaveHistoryFilters.toDate) {
+        if (appliedLeaveHistoryFilters.toDate) {
             const d = leave.appliedOn ? new Date(leave.appliedOn) : new Date();
             const leaveDate = d.toISOString().split('T')[0];
-            matchDate = matchDate && leaveDate <= leaveHistoryFilters.toDate;
+            matchDate = matchDate && leaveDate <= appliedLeaveHistoryFilters.toDate;
         }
 
-        const matchName = !leaveHistoryFilters.name || leave.employeeId?.name.toLowerCase().includes(leaveHistoryFilters.name.toLowerCase());
-        const matchStatus = !leaveHistoryFilters.status || leave.status === leaveHistoryFilters.status;
+        const query = appliedLeaveHistoryFilters.employee?.toLowerCase().trim();
+        const matchEmployee = !query ||
+            leave.employeeId?.name.toLowerCase().includes(query) ||
+            leave.employeeId?.employeeId.toLowerCase().includes(query) ||
+            (Array.isArray(leave.employeeId?.role) ? leave.employeeId?.role.some(r => r.toLowerCase().includes(query)) : leave.employeeId?.role?.toLowerCase().includes(query));
 
-        return matchDate && matchName && matchStatus;
+        const matchStatus = !appliedLeaveHistoryFilters.status || leave.status === appliedLeaveHistoryFilters.status;
+
+        return matchDate && matchEmployee && matchStatus;
     });
 
     const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
@@ -131,28 +289,43 @@ const Dashboard = () => {
     const [selectedLeaveForDetails, setSelectedLeaveForDetails] = useState(null);
 
     // Employee Filtering Logic
+    const handleChatClick = async (taskId) => {
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch(`${API_URL}/channels/task/${taskId}`, {
+                headers: { 'x-auth-token': token }
+            });
+
+            if (res.ok) {
+                const channel = await res.json();
+                navigate(`/chat/${channel._id}`);
+            } else {
+                alert("No channel found for this task yet.");
+            }
+        } catch (error) {
+            console.error("Error navigating to chat:", error);
+            alert("Error navigating to chat");
+        }
+    };
+
     useEffect(() => {
         let result = employees;
-        if (employeeFilters.employeeId) {
-            result = result.filter(e => e.employeeId?.toLowerCase().includes(employeeFilters.employeeId.toLowerCase()));
+        const searchVal = appliedEmployeeSearch;
+
+        if (searchVal && searchVal.trim() !== "") {
+            const query = searchVal.trim().toLowerCase();
+
+            result = result.filter(e => {
+                return (
+                    e.name?.toLowerCase().includes(query) ||
+                    e.employeeId?.toLowerCase().includes(query) ||
+                    (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query))
+                );
+            });
         }
-        if (employeeFilters.name) {
-            result = result.filter(e => e.name?.toLowerCase().includes(employeeFilters.name.toLowerCase()));
-        }
-        if (employeeFilters.role) {
-            result = result.filter(e => e.role === employeeFilters.role);
-        }
-        if (employeeFilters.designation) {
-            result = result.filter(e => e.designation === employeeFilters.designation);
-        }
-        if (employeeFilters.workType) {
-            result = result.filter(e => e.workType === employeeFilters.workType);
-        }
-        if (employeeFilters.email) {
-            result = result.filter(e => e.email?.toLowerCase().includes(employeeFilters.email.toLowerCase()));
-        }
+
         setFilteredEmployees(result);
-    }, [employees, employeeFilters]);
+    }, [employees, appliedEmployeeSearch]);
 
     // Task Filtering Logic
     useEffect(() => {
@@ -167,28 +340,41 @@ const Dashboard = () => {
         // 'total_projects' and 'total_tasks' show everything initially
 
         // 2. Apply Manual Filters
-        if (taskFilters.projectName) {
-            result = result.filter(t => t.projectName === taskFilters.projectName);
+        const filterFromDate = appliedTaskFilters.fromDate || todayDate;
+        const filterToDate = appliedTaskFilters.toDate || todayDate;
+
+        result = result.filter(t => {
+            const taskDate = t.startDate?.includes('T') ? t.startDate.split('T')[0] : t.startDate;
+            return taskDate >= filterFromDate && taskDate <= filterToDate;
+        });
+
+        if (appliedTaskFilters.projectName) {
+            result = result.filter(t => t.projectName === appliedTaskFilters.projectName);
         }
-        if (taskFilters.assignedTo) {
+        if (appliedTaskFilters.assignedTo) {
             result = result.filter(t => {
-                if (Array.isArray(t.assignedTo)) return t.assignedTo.includes(taskFilters.assignedTo);
-                return t.assignedTo === taskFilters.assignedTo;
+                if (Array.isArray(t.assignedTo)) return t.assignedTo.includes(appliedTaskFilters.assignedTo);
+                return t.assignedTo === appliedTaskFilters.assignedTo;
             });
         }
-        if (taskFilters.fromDate) {
-            result = result.filter(t => t.startDate >= taskFilters.fromDate);
-        }
-        if (taskFilters.toDate) {
-            result = result.filter(t => t.startDate <= taskFilters.toDate);
-        }
-        if (taskFilters.status) {
-            result = result.filter(t => t.status === taskFilters.status);
+        if (appliedTaskFilters.status) {
+            result = result.filter(t => t.status === appliedTaskFilters.status);
         }
 
         setFilteredTasks(result);
-        setFilteredTasks(result);
-    }, [allTasks, taskFilters, viewMode]);
+    }, [allTasks, appliedTaskFilters, viewMode]);
+
+    useEffect(() => {
+        const defaultTaskFilters = {
+            projectName: "",
+            assignedTo: "",
+            fromDate: "",
+            toDate: "",
+            status: ""
+        };
+        setTaskFilters(defaultTaskFilters);
+        setAppliedTaskFilters(defaultTaskFilters);
+    }, [viewMode]);
 
     // Leave Actions
     const handleLeaveAction = async (id, status, reason = null) => {
@@ -229,12 +415,71 @@ const Dashboard = () => {
     const uniqueProjects = [...new Set(allTasks.map(t => t.projectName).filter(Boolean))];
     const uniqueTaskStatuses = ["In Progress", "Completed", "Hold", "Pending"];
 
+    // Date grouping logic for tasks
+    const getDateLabel = (dateStr) => {
+        if (!dateStr) return "No Date";
+        const getLocalDateString = (d) => {
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
+
+        const today = getLocalDateString(new Date());
+        const yesterdayDate = new Date();
+        yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+        const yesterday = getLocalDateString(yesterdayDate);
+
+        const taskDateStr = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+
+        if (taskDateStr === today) return "TODAY";
+        if (taskDateStr === yesterday) return "YESTERDAY";
+
+        if (taskDateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            const [y, m, d] = taskDateStr.split('-');
+            return `${d}-${m}-${y}`;
+        }
+        return taskDateStr;
+    };
+
+    const getUniqueEmployeeCount = (tasks) => {
+        const uniqueEmps = new Set();
+        tasks.forEach(task => {
+            let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : (task.assignee || []);
+            if (Array.isArray(targets)) {
+                targets.forEach(item => {
+                    const id = typeof item === 'object' && item !== null ? (item._id || item.id) : item;
+                    if (id) uniqueEmps.add(id);
+                });
+            } else if (targets) {
+                const id = typeof targets === 'object' ? (targets._id || targets.id) : targets;
+                if (id) uniqueEmps.add(id);
+            }
+        });
+        return uniqueEmps.size;
+    };
+
+    const sortedTasks = [...filteredTasks].sort((a, b) => new Date(b.startDate) - new Date(a.startDate));
+
+    const groupedTasks = sortedTasks.reduce((groups, task) => {
+        const label = getDateLabel(task.startDate);
+        if (!groups[label]) groups[label] = [];
+        groups[label].push(task);
+        return groups;
+    }, {});
+
     // Unique Roles (Department) for Dropdown
-    const uniqueRoles = [...new Set(employees.map(e => e.role).filter(Boolean))];
+    const uniqueRoles = [...new Set(employees.flatMap(e => Array.isArray(e.role) ? e.role : (e.role ? [e.role] : [])).map(s => s.trim()))];
     // Unique Designations (Role in UI)
-    const uniqueDesignations = [...new Set(employees.map(e => e.designation).filter(Boolean))];
+    const uniqueDesignations = [...new Set(employees.flatMap(e => Array.isArray(e.designation) ? e.designation : (e.designation ? [e.designation] : [])).map(s => s.trim()))];
     // Unique Work Types
-    const uniqueWorkTypes = [...new Set(employees.map(e => e.workType).filter(Boolean))];
+    const uniqueWorkTypes = [...new Set(employees.flatMap(e => Array.isArray(e.workType) ? e.workType : (e.workType ? [e.workType] : [])).map(s => s.trim()))];
+    // Unique Employee IDs
+    const uniqueEmployeeIds = [...new Set(employees.map(e => e.employeeId).filter(Boolean))];
+    // Unique Full Names
+    const uniqueNames = [...new Set(employees.map(e => e.name).filter(Boolean))];
+    // Unique Emails
+    const uniqueEmails = [...new Set(employees.map(e => e.email).filter(Boolean))];
 
     useEffect(() => {
         const fetchEmployees = async () => {
@@ -372,18 +617,21 @@ const Dashboard = () => {
 
     // Filter Logic for Attendance History
     const filteredHistory = attendanceHistory.filter(record => {
-        let matchDate = true;
-        if (attendanceFilters.fromDate) matchDate = matchDate && record.date >= attendanceFilters.fromDate;
-        if (attendanceFilters.toDate) matchDate = matchDate && record.date <= attendanceFilters.toDate;
+        const filterFromDate = appliedAttendanceFilters.fromDate || todayDate;
+        const filterToDate = appliedAttendanceFilters.toDate || todayDate;
 
-        const matchName = !attendanceFilters.name || record.employeeId?.name.toLowerCase().includes(attendanceFilters.name.toLowerCase());
-        const matchId = !attendanceFilters.employeeId || record.employeeId?.employeeId.toLowerCase().includes(attendanceFilters.employeeId.toLowerCase());
-        const matchStatus = !attendanceFilters.status || record.status === attendanceFilters.status;
+        let matchDate = record.date >= filterFromDate && record.date <= filterToDate;
 
-        return matchDate && matchName && matchId && matchStatus;
+        const query = appliedAttendanceFilters.employee?.toLowerCase().trim();
+        const matchEmployee = !query ||
+            record.employeeId?.name.toLowerCase().includes(query) ||
+            record.employeeId?.employeeId.toLowerCase().includes(query) ||
+            (Array.isArray(record.employeeId?.role) ? record.employeeId?.role.some(r => r.toLowerCase().includes(query)) : record.employeeId?.role?.toLowerCase().includes(query));
+
+        const matchStatus = !appliedAttendanceFilters.status || record.status === appliedAttendanceFilters.status;
+
+        return matchDate && matchEmployee && matchStatus;
     });
-
-
 
     // Filter Logic for Leave History
 
@@ -393,94 +641,35 @@ const Dashboard = () => {
     const absentCount = filteredHistory.filter(r => r.status === 'Absent').length;
 
     const groupAttendanceByDate = (history) => {
-        const groups = {
-            Today: [],
-            Yesterday: [],
-            LastWeek: [],
-            OldDays: []
-        };
+        const sortedHistory = [...history].sort((a, b) => new Date(b.date) - new Date(a.date));
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const yesterday = new Date(today);
-        yesterday.setDate(today.getDate() - 1);
-
-        const lastWeek = new Date(today);
-        lastWeek.setDate(today.getDate() - 7);
-
-        history.forEach(record => {
-            if (!record.employeeId) return; // Skip if employee populated failed
-
-            const recordDate = new Date(record.date); // record.date is YYYY-MM-DD string
-            recordDate.setHours(0, 0, 0, 0);
-
-            if (recordDate.getTime() === today.getTime()) {
-                groups.Today.push(record);
-            } else if (recordDate.getTime() === yesterday.getTime()) {
-                groups.Yesterday.push(record);
-            } else if (recordDate > lastWeek) {
-                groups.LastWeek.push(record);
-            } else {
-                groups.OldDays.push(record);
-            }
-        });
+        const groups = sortedHistory.reduce((acc, record) => {
+            if (!record.employeeId) return acc;
+            const label = getDateLabel(record.date);
+            if (!acc[label]) acc[label] = [];
+            acc[label].push(record);
+            return acc;
+        }, {});
 
         return groups;
     };
 
     const groupWorkingHoursByDate = (history) => {
-        const groups = {};
         const presentOnly = history.filter(r => r.status === "Present" && r.employeeId);
+        const sortedHistory = [...presentOnly].sort((a, b) => new Date(b.date) - new Date(a.date));
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const groups = sortedHistory.reduce((acc, record) => {
+            const label = getDateLabel(record.date);
+            if (!acc[label]) acc[label] = [];
+            acc[label].push(record);
+            return acc;
+        }, {});
 
-        const yesterday = new Date(today);
-        yesterday.setDate(today.getDate() - 1);
-
-        presentOnly.forEach(record => {
-            const recordDate = new Date(record.date);
-            recordDate.setHours(0, 0, 0, 0);
-
-            let groupName = "";
-            if (recordDate.getTime() === today.getTime()) {
-                groupName = "Today";
-            } else if (recordDate.getTime() === yesterday.getTime()) {
-                groupName = "Yesterday";
-            } else {
-                const d = recordDate.getDate().toString().padStart(2, '0');
-                const m = (recordDate.getMonth() + 1).toString().padStart(2, '0');
-                const y = recordDate.getFullYear();
-                groupName = `${d}-${m}-${y}`;
-            }
-
-            if (!groups[groupName]) {
-                groups[groupName] = [];
-            }
-            groups[groupName].push(record);
-        });
-
-        const sortedGroups = {};
-        if (groups["Today"]) sortedGroups["Today"] = groups["Today"];
-        if (groups["Yesterday"]) sortedGroups["Yesterday"] = groups["Yesterday"];
-
-        // Sort remaining dates descending
-        const otherDates = Object.keys(groups).filter(k => k !== "Today" && k !== "Yesterday").sort((a, b) => {
-            const [d1, m1, y1] = a.split('-');
-            const [d2, m2, y2] = b.split('-');
-            return new Date(`${y2}-${m2}-${d2}`) - new Date(`${y1}-${m1}-${d1}`);
-        });
-
-        otherDates.forEach(key => {
-            sortedGroups[key] = groups[key];
-        });
-
-        return sortedGroups;
+        return groups;
     };
 
     return (
-        <div className="flex min-h-screen bg-gray-100 font-sans relative">
+        <div className="flex h-screen overflow-hidden bg-gray-100 font-sans relative">
             {/* Desktop Sidebar */}
             <Sidebar className="hidden md:flex" />
 
@@ -497,7 +686,7 @@ const Dashboard = () => {
             )}
 
             {/* Main Content */}
-            <div className="flex-1 flex flex-col h-screen overflow-hidden">
+            <div className="flex-1 min-w-0 flex flex-col h-screen overflow-hidden">
                 {/* Header (Mobile toggle) */}
                 <header className="bg-white shadow-sm p-4 flex justify-between items-center md:hidden z-10">
                     <h1 className="text-xl font-bold text-gray-800">AdminPanel</h1>
@@ -512,83 +701,83 @@ const Dashboard = () => {
                 </header>
 
                 <main className="flex-1 p-6 overflow-y-auto">
-                    <div className="mb-6 flex justify-between items-end">
+                    <div className="mb-6 flex flex-col xl:flex-row xl:justify-between xl:items-end gap-6">
                         <div>
                             <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
                             <div className="mt-3">
                                 <p className="text-xl font-medium text-gray-500 mb-1">Hi, Welcome Back 👋</p>
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
                                     <h2 className="text-xl font-extrabold text-gray-800 tracking-tight leading-none">
                                         {user.name?.toUpperCase()}
                                     </h2>
-                                    <p className="text-sm font-bold text-indigo-600 mt-1 uppercase tracking-wide">
+                                    <p className="text-sm font-bold text-indigo-600 mt-1 uppercase tracking-wide break-words">
                                         {user.designation || (Array.isArray(user.role) ? user.role.join(" - ") : user.role)}
                                     </p>
                                 </div>
-                                <p className="text-xs text-gray-400 font-medium flex items-center gap-2 mt-1.5">
-                                    <FaEnvelope /> {user.email}
+                                <p className="text-xs text-gray-400 font-medium flex items-center gap-2 mt-1.5 break-all">
+                                    <FaEnvelope className="shrink-0" /> {user.email}
                                 </p>
                             </div>
                         </div>
-                        <div className="flex items-center justify-between gap-10">
+                        <div className="flex flex-col lg:flex-row items-center justify-between gap-6 xl:gap-10 w-full xl:w-auto">
                             {/* Attendance Section */}
-                            <div>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="w-full lg:w-auto">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                     <div
-                                        onClick={() => setViewMode(viewMode === 'present' ? 'none' : 'present')}
+                                        onClick={() => handleViewChange('present')}
                                         className="bg-gradient-to-r from-emerald-500 to-green-400 rounded-lg shadow-sm p-4 text-white flex justify-between items-center transition hover:shadow-md cursor-pointer hover:scale-105"
                                     >
-                                        <div>
-                                            <p className="text-emerald-100 text-xs font-medium uppercase tracking-wider">Present</p>
-                                            <h3 className="text-2xl font-bold mt-1">
+                                        <div className="min-w-0 pr-2">
+                                            <p className="text-emerald-100 text-[10px] sm:text-xs font-medium uppercase tracking-wider truncate">Present</p>
+                                            <h3 className="text-xl sm:text-2xl font-bold mt-1">
                                                 {employees.filter(e => e.status === "Present").length}
                                             </h3>
                                         </div>
-                                        <div className="p-2 bg-white bg-opacity-20 rounded-full">
-                                            <MdCheckCircle className="w-6 h-6 text-white" />
+                                        <div className="p-2 bg-white bg-opacity-20 rounded-full shrink-0">
+                                            <MdCheckCircle className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
                                         </div>
                                     </div>
 
                                     <div
-                                        onClick={() => setViewMode(viewMode === 'absent' ? 'none' : 'absent')}
+                                        onClick={() => handleViewChange('absent')}
                                         className="bg-gradient-to-r from-rose-500 to-red-400 rounded-lg shadow-sm p-4 text-white flex justify-between items-center transition hover:shadow-md cursor-pointer hover:scale-105"
                                     >
-                                        <div>
-                                            <p className="text-rose-100 text-xs font-medium uppercase tracking-wider">Absent</p>
-                                            <h3 className="text-2xl font-bold mt-1">
+                                        <div className="min-w-0 pr-2">
+                                            <p className="text-rose-100 text-[10px] sm:text-xs font-medium uppercase tracking-wider truncate">Absent</p>
+                                            <h3 className="text-xl sm:text-2xl font-bold mt-1">
                                                 {employees.filter(e => e.status === "Absent").length}
                                             </h3>
                                         </div>
-                                        <div className="p-2 bg-white bg-opacity-20 rounded-full">
-                                            <MdCancel className="w-6 h-6 text-white" />
+                                        <div className="p-2 bg-white bg-opacity-20 rounded-full shrink-0">
+                                            <MdCancel className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
                                         </div>
                                     </div>
 
                                     <div
-                                        onClick={() => setViewMode(viewMode === 'attendance_sheet' ? 'none' : 'attendance_sheet')}
+                                        onClick={() => handleViewChange('attendance_sheet')}
                                         className="bg-gradient-to-r from-blue-500 to-indigo-400 rounded-lg shadow-sm p-4 text-white flex justify-between items-center transition hover:shadow-md cursor-pointer hover:scale-105"
                                     >
-                                        <div>
-                                            <p className="text-blue-100 text-xs font-medium uppercase tracking-wider">Attendance</p>
-                                            <h3 className="text-2xl font-bold mt-1">
+                                        <div className="min-w-0 pr-2">
+                                            <p className="text-blue-100 text-[10px] sm:text-xs font-medium uppercase tracking-wider truncate">Attendance</p>
+                                            <h3 className="text-xl sm:text-2xl font-bold mt-1">
                                                 {employees.length}
                                             </h3>
                                         </div>
-                                        <div className="p-2 bg-white bg-opacity-20 rounded-full">
-                                            <FaClipboardList className="w-6 h-6 text-white" />
+                                        <div className="p-2 bg-white bg-opacity-20 rounded-full shrink-0">
+                                            <FaClipboardList className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
                                         </div>
                                     </div>
                                 </div>
                             </div>
-                            <div className="text-xs font-mono bg-white border border-gray-200 px-5 py-5 rounded shadow-sm text-gray-600 flex items-center">
-                                <span className="w-2 h-2 rounded-full bg-green-500 mr-2"></span>
-                                {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            <div className="text-xs font-mono bg-white border border-gray-200 px-5 py-4 sm:py-5 rounded shadow-sm text-gray-600 flex items-center w-full lg:w-auto justify-center">
+                                <span className="w-2 h-2 shrink-0 rounded-full bg-green-500 mr-2"></span>
+                                <span className="truncate">{new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                             </div>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
-                        <div onClick={() => setViewMode(viewMode === 'total' ? 'none' : 'total')} className="cursor-pointer transition-transform hover:scale-105">
+                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 mb-6 w-full">
+                        <div onClick={() => handleViewChange('total')} className="cursor-pointer transition-transform hover:scale-105">
                             <StatCard
                                 title="Total Employees"
                                 count={employees.length}
@@ -597,9 +786,16 @@ const Dashboard = () => {
                             />
                         </div>
 
-                        <div onClick={() => {
-                            setViewMode(viewMode === 'total_projects' ? 'none' : 'total_projects');
-                        }} className="cursor-pointer transition-transform hover:scale-105">
+                        <div onClick={() => handleViewChange('present')} className="cursor-pointer transition-transform hover:scale-105">
+                            <StatCard
+                                title="Active Employees"
+                                count={employees.filter(e => e.status === "Present").length}
+                                color="border-emerald-500"
+                                icon={<FaUserCheck />}
+                            />
+                        </div>
+
+                        <div onClick={() => handleViewChange('total_projects')} className="cursor-pointer transition-transform hover:scale-105">
                             <StatCard
                                 title="Total Projects"
                                 count={stats.totalProjects}
@@ -608,9 +804,7 @@ const Dashboard = () => {
                             />
                         </div>
 
-                        <div onClick={() => {
-                            setViewMode(viewMode === 'total_tasks' ? 'none' : 'total_tasks');
-                        }} className="cursor-pointer transition-transform hover:scale-105">
+                        <div onClick={() => handleViewChange('total_tasks')} className="cursor-pointer transition-transform hover:scale-105">
                             <StatCard
                                 title="Total Tasks"
                                 count={stats.totalTasks}
@@ -619,9 +813,7 @@ const Dashboard = () => {
                             />
                         </div>
 
-                        <div onClick={() => {
-                            setViewMode(viewMode === 'pending_tasks' ? 'none' : 'pending_tasks');
-                        }} className="cursor-pointer transition-transform hover:scale-105">
+                        <div onClick={() => handleViewChange('pending_tasks')} className="cursor-pointer transition-transform hover:scale-105">
                             <StatCard
                                 title="Pending Tasks"
                                 count={stats.pendingTasks}
@@ -630,9 +822,7 @@ const Dashboard = () => {
                             />
                         </div>
 
-                        <div onClick={() => {
-                            setViewMode(viewMode === 'active_tasks' ? 'none' : 'active_tasks');
-                        }} className="cursor-pointer transition-transform hover:scale-105">
+                        <div onClick={() => handleViewChange('active_tasks')} className="cursor-pointer transition-transform hover:scale-105">
                             <StatCard
                                 title="Active Tasks"
                                 count={stats.activeTasks}
@@ -641,9 +831,7 @@ const Dashboard = () => {
                             />
                         </div>
 
-                        <div onClick={() => {
-                            setViewMode(viewMode === 'leave_requests' ? 'none' : 'leave_requests');
-                        }} className="cursor-pointer transition-transform hover:scale-105">
+                        <div onClick={() => handleViewChange('leave_requests')} className="cursor-pointer transition-transform hover:scale-105">
                             <StatCard
                                 title="Leave Requests"
                                 count={pendingLeaves.length}
@@ -652,9 +840,7 @@ const Dashboard = () => {
                             />
                         </div>
 
-                        <div onClick={() => {
-                            setViewMode(viewMode === 'all_leaves' ? 'none' : 'all_leaves');
-                        }} className="cursor-pointer transition-transform hover:scale-105">
+                        <div onClick={() => handleViewChange('all_leaves')} className="cursor-pointer transition-transform hover:scale-105">
                             <StatCard
                                 title="Total Leaves"
                                 count={leaves.length}
@@ -663,12 +849,10 @@ const Dashboard = () => {
                             />
                         </div>
 
-                        <div onClick={() => {
-                            setViewMode(viewMode === 'working_hours' ? 'none' : 'working_hours');
-                        }} className="cursor-pointer transition-transform hover:scale-105">
+                        <div onClick={() => handleViewChange('working_hours')} className="cursor-pointer transition-transform hover:scale-105">
                             <StatCard
                                 title="Working Hours"
-                                count={employees.length}
+                                count={<span className="text-[15px] sm:text-[18px] leading-tight block truncate" title={workingHoursSummary.display}>{workingHoursSummary.display}</span>}
                                 color="border-teal-500"
                                 icon={<MdDateRange />}
                             />
@@ -679,382 +863,437 @@ const Dashboard = () => {
                     {['total', 'present', 'absent', 'attendance_sheet', 'working_hours'].includes(viewMode) && (
                         <div className="bg-white rounded-xl shadow-sm border border-gray-100 mb-8">
                             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-                                <h3 className="text-lg font-bold text-gray-800">
-                                    {viewMode === 'total' && "All Employees"}
-                                    {viewMode === 'present' && "Present Employees"}
-                                    {viewMode === 'absent' && "Absent Employees"}
-                                    {viewMode === 'attendance_sheet' && "Daily Attendance Sheet"}
-                                    {viewMode === 'working_hours' && "Working Hours"}
+                                <h3 className="text-lg font-extrabold text-slate-800 tracking-wider uppercase">
+                                    {viewMode === 'total' && "TOTAL EMPLOYEES"}
+                                    {viewMode === 'present' && "PRESENT EMPLOYEES"}
+                                    {viewMode === 'absent' && "ABSENT EMPLOYEES"}
+                                    {viewMode === 'attendance_sheet' && "ATTENDANCE"}
+                                    {viewMode === 'working_hours' && "WORKING HOURS"}
                                 </h3>
                             </div>
 
                             {/* Filter Navbar (Only for Total View) */}
                             {viewMode === 'total' && (
-                                <div className="p-4 bg-gray-50 border-b border-gray-100 grid grid-cols-1 md:grid-cols-3 lg:flex lg:items-end gap-2 lg:gap-4">
-                                    {/* Employee ID */}
-                                    <div className="w-full lg:flex-1">
-                                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Employee ID</label>
-                                        <div className="relative">
-                                            <input
-                                                type="text"
-                                                value={employeeFilters.employeeId}
-                                                onChange={(e) => setEmployeeFilters({ ...employeeFilters, employeeId: e.target.value })}
-                                                placeholder="Search ID"
-                                                className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white text-gray-700 font-medium h-[38px]"
-                                            />
-                                            <FaIdCard className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                                <div className="p-6 bg-gray-50/50 border-b border-gray-100">
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
+                                        {/* Employee Search */}
+                                        <div className="relative" ref={searchWrapperRef}>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">
+                                                Employee Search
+                                            </label>
+                                            <div className="relative">
+                                                <FaSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm" />
+                                                <input
+                                                    type="text"
+                                                    className="w-full h-[40px] pl-10 pr-4 rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all bg-white placeholder:text-gray-400 font-medium"
+                                                    placeholder="Search by Name, ID, or Dept..."
+                                                    value={employeeSearch}
+                                                    onChange={(e) => {
+                                                        setEmployeeSearch(e.target.value);
+                                                        setIsEmployeeDropdownOpen(true);
+                                                    }}
+                                                    onFocus={() => setIsEmployeeDropdownOpen(true)}
+                                                />
+                                            </div>
+
+                                            {/* Dropdown UI */}
+                                            {isEmployeeDropdownOpen && (
+                                                <div className="absolute top-[calc(100%+4px)] left-0 w-full bg-white border border-gray-100 rounded-xl shadow-2xl max-h-[200px] overflow-y-auto z-[999] custom-scrollbar">
+                                                    {employees.filter(e => {
+                                                        const query = employeeSearch.toLowerCase().trim();
+                                                        if (!query) return true;
+                                                        return e.name?.toLowerCase().includes(query) ||
+                                                            e.employeeId?.toLowerCase().includes(query) ||
+                                                            (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
+                                                    }).length > 0 ? (
+                                                        employees.filter(e => {
+                                                            const query = employeeSearch.toLowerCase().trim();
+                                                            if (!query) return true;
+                                                            return e.name?.toLowerCase().includes(query) ||
+                                                                e.employeeId?.toLowerCase().includes(query) ||
+                                                                (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
+                                                        }).map((emp, i) => (
+                                                            <div
+                                                                key={emp._id || i}
+                                                                onClick={() => {
+                                                                    setEmployeeSearch(emp.name);
+                                                                    setIsEmployeeDropdownOpen(false);
+                                                                }}
+                                                                className="p-3 px-5 border-b border-gray-50 flex items-center gap-2 cursor-pointer hover:bg-indigo-50/50 transition-colors w-full overflow-hidden"
+                                                            >
+                                                                <span className="font-bold text-gray-800 text-[13px] uppercase whitespace-nowrap shrink-0">{emp.name}</span>
+                                                                <span className="text-gray-300 shrink-0">—</span>
+                                                                <span title={Array.isArray(emp.role) ? emp.role.join(', ') : (emp.role || 'No Dept')} className="bg-gray-100 text-gray-600 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider shadow-sm truncate min-w-0">
+                                                                    {Array.isArray(emp.role) ? emp.role.join(', ') : (emp.role || 'No Dept')}
+                                                                </span>
+                                                                <span className="text-gray-300 shrink-0">—</span>
+                                                                <span className="text-gray-500 text-[12px] font-mono uppercase tracking-wider shrink-0">{emp.employeeId}</span>
+                                                            </div>
+                                                        ))
+                                                    ) : (
+                                                        <div className="p-6 text-sm text-gray-500 text-center flex flex-col items-center justify-center gap-2">
+                                                            <FaExclamationCircle className="text-gray-300 text-2xl" />
+                                                            <p>No matching employees found for "<span className="font-semibold text-gray-700">{employeeSearch}</span>"</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
-                                    </div>
 
-                                    {/* Full Name */}
-                                    <div className="w-full lg:flex-1">
-                                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Full Name</label>
-                                        <div className="relative">
-                                            <input
-                                                type="text"
-                                                value={employeeFilters.name}
-                                                onChange={(e) => setEmployeeFilters({ ...employeeFilters, name: e.target.value })}
-                                                placeholder="Search Name"
-                                                className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white text-gray-700 font-medium h-[38px]"
-                                            />
-                                            <FaUser className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                                        {/* Action Buttons */}
+                                        <div className="flex items-center gap-3">
+                                            <button
+                                                onClick={() => {
+                                                    setIsTableLoading(true);
+                                                    setAppliedEmployeeSearch(employeeSearch);
+                                                    setIsEmployeeDropdownOpen(false);
+                                                    setTimeout(() => setIsTableLoading(false), 800);
+                                                }}
+                                                className="h-[40px] px-8 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-sm font-bold transition-all shadow-sm active:scale-95 flex items-center justify-center gap-2"
+                                                title="Fetch Data"
+                                            >
+                                                <svg className="w-4 h-4 font-bold" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                                                Fetch Data
+                                            </button>
+
+                                            {appliedEmployeeSearch && (
+                                                <button
+                                                    onClick={() => {
+                                                        setEmployeeSearch("");
+                                                        setAppliedEmployeeSearch("");
+                                                    }}
+                                                    className="h-[40px] w-[40px] shrink-0 bg-red-50 hover:bg-red-100 text-red-500 rounded-md flex items-center justify-center font-bold text-sm transition-all shadow-sm active:scale-95"
+                                                    title="Clear Search"
+                                                >
+                                                    <FaRedo />
+                                                </button>
+                                            )}
                                         </div>
-                                    </div>
-
-                                    {/* Email */}
-                                    <div className="w-full lg:flex-1">
-                                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Email Address</label>
-                                        <div className="relative">
-                                            <input
-                                                type="text"
-                                                value={employeeFilters.email}
-                                                onChange={(e) => setEmployeeFilters({ ...employeeFilters, email: e.target.value })}
-                                                placeholder="Search Email"
-                                                className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white text-gray-700 font-medium h-[38px]"
-                                            />
-                                            <FaEnvelope className="absolute left-3 top-2.5 text-gray-400 text-xs" />
-                                        </div>
-                                    </div>
-
-                                    {/* Department Filter */}
-                                    <div className="w-full lg:flex-1">
-                                        <CustomDropdown
-                                            label="Department"
-                                            options={[
-                                                { value: "", label: "All Departments" },
-                                                { value: "SM Developer", label: "SM Developer", icon: FaUserTag },
-                                                { value: "SM SEO Specialist", label: "SM SEO Specialist", icon: FaUserTag },
-                                                { value: "SM Designer", label: "SM Designer", icon: FaUserTag },
-                                                { value: "Website Developer", label: "Website Developer", icon: FaUserTag },
-                                                { value: "Full Stack Developer", label: "Full Stack Developer", icon: FaUserTag },
-                                                { value: "Sales Team", label: "Sales Team", icon: FaUserTag }
-                                            ]}
-                                            value={employeeFilters.role}
-                                            onChange={(val) => setEmployeeFilters({ ...employeeFilters, role: val })}
-                                            placeholder="All Departments"
-                                        />
-                                    </div>
-
-                                    {/* Role Filter (Designation) */}
-                                    <div className="w-full lg:flex-1">
-                                        <CustomDropdown
-                                            label="Role"
-                                            options={[
-                                                { value: "", label: "All Roles" },
-                                                ...uniqueDesignations.map(d => ({ value: d, label: d, icon: FaUserTag }))
-                                            ]}
-                                            value={employeeFilters.designation}
-                                            onChange={(val) => setEmployeeFilters({ ...employeeFilters, designation: val })}
-                                            placeholder="All Roles"
-                                        />
-                                    </div>
-
-                                    {/* Work Type Filter */}
-                                    <div className="w-full lg:flex-1">
-                                        <CustomDropdown
-                                            label="Work Type"
-                                            options={[
-                                                { value: "", label: "All Work Types" },
-                                                ...uniqueWorkTypes.map(w => ({ value: w, label: w, icon: FaUserTag }))
-                                            ]}
-                                            value={employeeFilters.workType}
-                                            onChange={(val) => setEmployeeFilters({ ...employeeFilters, workType: val })}
-                                            placeholder="All Work Types"
-                                        />
-                                    </div>
-
-                                    {/* Reset Button */}
-                                    <div className="flex justify-end lg:justify-start lg:w-auto">
-                                        <button
-                                            onClick={() => setEmployeeFilters({ employeeId: "", name: "", role: "", designation: "", workType: "", email: "" })}
-                                            className="h-[38px] w-[38px] bg-red-50 hover:bg-red-100 text-red-500 border border-red-100 rounded-full text-sm font-bold transition-all shadow-sm active:scale-95 flex items-center justify-center"
-                                            title="Reset Filters"
-                                        >
-                                            <FaRedo />
-                                        </button>
                                     </div>
                                 </div>
                             )}
 
                             {viewMode !== 'attendance_sheet' && viewMode !== 'working_hours' ? (
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left border-collapse min-w-[1000px]">
-                                        <thead>
-                                            <tr className="bg-gray-50/50 text-left border-b border-gray-200">
-                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[3%] text-center">S.No</th>
-                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Employee ID</th>
+                                isTableLoading ? (
+                                    <TableLoader />
+                                ) : (
+                                    <div className="w-full overflow-x-auto custom-scrollbar">
+                                        <table className="w-full text-left border-collapse min-w-[800px] xl:min-w-[1000px]">
+                                            <thead>
+                                                <tr className="bg-gray-50/50 text-left border-b border-gray-200">
+                                                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[3%] text-center">S.No</th>
+                                                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Employee ID</th>
 
-                                                {viewMode === 'total' ? (
-                                                    <>
-                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Full Name</th>
-                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[18%]">Email Address</th>
-                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Department</th>
-                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Role</th>
-                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Work Type</th>
-                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Joining Date</th>
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Full Name</th>
-                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Department</th>
-                                                        {viewMode === 'absent' && <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Email Address</th>}
-                                                    </>
-                                                )}
+                                                    {viewMode === 'total' ? (
+                                                        <>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Full Name</th>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[18%]">Email Address</th>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Department</th>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Role</th>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Work Type</th>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Joining Date</th>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Full Name</th>
+                                                            {viewMode !== 'present' && <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Department</th>}
+                                                            {viewMode === 'absent' && <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Email Address</th>}
+                                                        </>
+                                                    )}
 
-                                                {/* Columns specific to View Mode */}
-                                                {viewMode === 'present' && (
-                                                    <>
-                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Login Time</th>
-                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%] text-center">Login Hours</th>
-                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-emerald-600 w-[10%] text-center">Active Hours</th>
-                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-amber-600 w-[10%] text-center">Idle Hours</th>
-                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%] text-center">Logout Time</th>
-                                                    </>
-                                                )}
-                                                {viewMode === 'absent' && (
-                                                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Reason</th>
-                                                )}
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-gray-100">
-                                            {(
-                                                viewMode === 'total' ? filteredEmployees :
-                                                    viewMode === 'present' ? employees.filter(e => e.status === "Present") :
-                                                        viewMode === 'absent' ? employees.filter(e => e.status === "Absent") : []
-                                            ).map((emp, index) => {
-                                                return (
-                                                    <tr key={emp._id} className="hover:bg-gray-50 transition-colors py-4">
-                                                        <td className="px-6 py-4 text-center text-gray-400 font-medium text-xs border-r border-gray-50 min-w-[50px]">
-                                                            {(index + 1).toString().padStart(2, '0')}
-                                                        </td>
-                                                        <td className="px-6 py-4 font-semibold text-gray-800 text-sm">{emp.employeeId || "-"}</td>
-
-                                                        {viewMode === 'total' ? (
-                                                            <>
-                                                                <td className="px-6 py-4 align-middle font-bold text-gray-900 text-sm">
-                                                                    {emp.name}
-                                                                </td>
-                                                                <td className="px-6 py-4 align-middle text-sm text-gray-500 break-all">
-                                                                    {emp.email}
-                                                                </td>
-                                                                <td className="px-6 py-4 align-middle">
-                                                                    <div className="flex flex-wrap gap-1">
-                                                                        {Array.isArray(emp.role) ? emp.role.map((r, i) => (
-                                                                            <span key={i} className="px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-normal">
-                                                                                {r}
-                                                                            </span>
-                                                                        )) : (
-                                                                            <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-normal">{emp.role}</span>
-                                                                        )}
-                                                                    </div>
-                                                                </td>
-                                                                <td className="px-6 py-4 text-gray-700 align-middle text-sm">{emp.designation || ""}</td>
-                                                                <td className="px-6 py-4 text-gray-700 align-middle text-sm">{emp.workType || ""}</td>
-                                                                <td className="px-6 py-4 text-gray-500 align-middle text-sm whitespace-nowrap">
-                                                                    {emp.joiningDate ? new Date(emp.joiningDate).toLocaleDateString() : "-"}
-                                                                </td>
-                                                            </>
-                                                        ) : (
-                                                            <>
-                                                                <td className="px-6 py-4 font-semibold text-gray-800 text-sm">{emp.name}</td>
-                                                                <td className="px-6 py-4 align-middle">
-                                                                    <span className="text-xs text-indigo-600 font-medium bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
-                                                                        {Array.isArray(emp.role) ? emp.role.join(", ") : emp.role}
-                                                                    </span>
-                                                                </td>
-                                                                {viewMode === 'absent' && <td className="px-6 py-4 text-blue-600 text-sm">{emp.email || "-"}</td>}
-                                                            </>
-                                                        )}
-
-                                                        {/* Present View Extra Column */}
-                                                        {viewMode === 'present' && (
-                                                            <>
-                                                                <td className="px-6 py-4 font-mono text-gray-600 text-sm text-center">
-                                                                    {emp.loginTime ? new Date(emp.loginTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-"}
-                                                                </td>
-                                                                <td className="px-6 py-4 font-mono text-gray-700 font-bold text-sm text-center">
-                                                                    {formatHHMMSS(emp.activeTime + emp.idleTime)}
-                                                                </td>
-                                                                <td className="px-6 py-4 font-mono text-emerald-600 font-bold text-sm text-center">
-                                                                    {emp.formattedActiveTime || "00:00:00"}
-                                                                </td>
-                                                                <td className="px-6 py-4 font-mono text-amber-600 font-bold text-sm text-center">
-                                                                    {emp.formattedIdleTime || "00:00:00"}
-                                                                </td>
-                                                                <td className="px-6 py-4 font-mono text-indigo-600 font-bold text-sm text-center">
-                                                                    {emp.logoutTime ? new Date(emp.logoutTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-"}
-                                                                </td>
-                                                            </>
-                                                        )}
-
-                                                        {/* Absent View Extra Column */}
-                                                        {viewMode === 'absent' && (
-                                                            <td className="p-4 text-red-500 font-medium italic">
-                                                                {(() => {
-                                                                    const todayStr = new Date().toISOString().split('T')[0];
-                                                                    const leave = leaves.find(l => {
-                                                                        if (l.employeeId?._id !== emp._id || l.status !== "Approved") return false;
-                                                                        if (l.leaveCategory === "Day Leave") {
-                                                                            return l.leaveDate === todayStr;
-                                                                        } else {
-                                                                            return l.permissionDate === todayStr;
-                                                                        }
-                                                                    });
-                                                                    return leave ? `${leave.leaveCategory} - ${leave.reason || "No Reason"}` : "Not yet logged in";
-                                                                })()}
+                                                    {/* Columns specific to View Mode */}
+                                                    {viewMode === 'present' && (
+                                                        <>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Login Time</th>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%] text-center">Logout Time</th>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-emerald-600 w-[10%] text-center">Active Hours</th>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-amber-600 w-[10%] text-center">Idle Hours</th>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-rose-600 w-[10%] text-center">Inactive Hours</th>
+                                                        </>
+                                                    )}
+                                                    {viewMode === 'absent' && (
+                                                        <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Reason</th>
+                                                    )}
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-100">
+                                                {(
+                                                    viewMode === 'total' ? filteredEmployees :
+                                                        viewMode === 'present' ? employees.filter(e => e.status === "Present") :
+                                                            viewMode === 'absent' ? employees.filter(e => e.status === "Absent") : []
+                                                ).map((emp, index) => {
+                                                    return (
+                                                        <tr key={emp._id} className="hover:bg-gray-50 transition-colors py-4">
+                                                            <td className="px-6 py-4 text-center text-gray-400 font-medium text-xs border-r border-gray-50 min-w-[50px]">
+                                                                {(index + 1).toString().padStart(2, '0')}
                                                             </td>
-                                                        )}
-                                                    </tr>
-                                                );
-                                            })}
+                                                            <td className="px-6 py-4 font-semibold text-gray-800 text-sm">{emp.employeeId || "-"}</td>
 
-                                            {/* Empty States */}
-                                            {viewMode === 'total' && employees.length === 0 && (
-                                                <tr><td colSpan="10" className="p-6 text-center text-gray-500">No employees found.</td></tr>
-                                            )}
-                                            {viewMode === 'present' && employees.filter(e => e.status === "Present").length === 0 && (
-                                                <tr><td colSpan="10" className="p-6 text-center text-gray-500">No employees present today.</td></tr>
-                                            )}
-                                            {viewMode === 'absent' && employees.filter(e => e.status === "Absent").length === 0 && (
-                                                <tr><td colSpan="10" className="p-6 text-center text-gray-500">No employees absent today.</td></tr>
-                                            )}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                                            {viewMode === 'total' ? (
+                                                                <>
+                                                                    <td className="px-6 py-4 align-middle font-bold text-gray-900 text-sm">
+                                                                        {emp.name}
+                                                                    </td>
+                                                                    <td className="px-6 py-4 align-middle text-sm text-gray-500 break-all">
+                                                                        {emp.email}
+                                                                    </td>
+                                                                    <td className="px-6 py-4 align-middle">
+                                                                        <div className="flex flex-wrap gap-1">
+                                                                            {Array.isArray(emp.role) ? emp.role.map((r, i) => (
+                                                                                <span key={i} className="px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-normal">
+                                                                                    {r}
+                                                                                </span>
+                                                                            )) : (
+                                                                                <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-normal">{emp.role}</span>
+                                                                            )}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td className="px-6 py-4 text-gray-700 align-middle text-sm">{emp.designation || ""}</td>
+                                                                    <td className="px-6 py-4 text-gray-700 align-middle text-sm">{emp.workType || ""}</td>
+                                                                    <td className="px-6 py-4 text-gray-500 align-middle text-sm whitespace-nowrap">
+                                                                        {emp.joiningDate ? new Date(emp.joiningDate).toLocaleDateString() : "-"}
+                                                                    </td>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <td className="px-6 py-4 align-middle">
+                                                                        <div className="font-semibold text-gray-800 text-sm">{emp.name}</div>
+                                                                        {viewMode === 'present' && (
+                                                                            <div className="mt-1">
+                                                                                <span className="text-[10px] text-indigo-600 font-medium bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                                                                                    {Array.isArray(emp.role) ? emp.role.join(", ") : emp.role}
+                                                                                </span>
+                                                                            </div>
+                                                                        )}
+                                                                    </td>
+                                                                    {viewMode !== 'present' && (
+                                                                        <td className="px-6 py-4 align-middle">
+                                                                            <span className="text-xs text-indigo-600 font-medium bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                                                                                {Array.isArray(emp.role) ? emp.role.join(", ") : emp.role}
+                                                                            </span>
+                                                                        </td>
+                                                                    )}
+                                                                    {viewMode === 'absent' && <td className="px-6 py-4 text-blue-600 text-sm">{emp.email || "-"}</td>}
+                                                                </>
+                                                            )}
+
+                                                            {/* Present View Extra Column */}
+                                                            {viewMode === 'present' && (
+                                                                <>
+                                                                    <td className="px-6 py-4 font-mono text-gray-600 text-sm text-center">
+                                                                        {emp.loginTime ? new Date(emp.loginTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-"}
+                                                                    </td>
+                                                                    <td className="px-6 py-4 font-mono text-indigo-600 font-bold text-sm text-center">
+                                                                        {emp.logoutTime ? new Date(emp.logoutTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-"}
+                                                                    </td>
+                                                                    <td className="px-6 py-4 font-mono text-emerald-600 font-bold text-sm text-center">
+                                                                        {emp.formattedActiveTime || "00:00:00"}
+                                                                    </td>
+                                                                    <td className="px-6 py-4 font-mono text-amber-600 font-bold text-sm text-center">
+                                                                        {emp.formattedIdleTime || "00:00:00"}
+                                                                    </td>
+                                                                    <td className="px-6 py-4 font-mono text-rose-600 font-bold text-sm text-center">
+                                                                        {calculateInactiveHours(emp.formattedActiveTime, emp.formattedIdleTime)}
+                                                                    </td>
+                                                                </>
+                                                            )}
+
+                                                            {/* Absent View Extra Column */}
+                                                            {viewMode === 'absent' && (
+                                                                <td className="p-4 text-red-500 font-medium italic">
+                                                                    {(() => {
+                                                                        const todayStr = new Date().toISOString().split('T')[0];
+                                                                        const leave = leaves.find(l => {
+                                                                            if (l.employeeId?._id !== emp._id || l.status !== "Approved") return false;
+                                                                            if (l.leaveCategory === "Day Leave") {
+                                                                                return l.leaveDate === todayStr;
+                                                                            } else {
+                                                                                return l.permissionDate === todayStr;
+                                                                            }
+                                                                        });
+                                                                        return leave ? `${leave.leaveCategory} - ${leave.reason || "No Reason"}` : "Not yet logged in";
+                                                                    })()}
+                                                                </td>
+                                                            )}
+                                                        </tr>
+                                                    );
+                                                })}
+
+                                                {/* Empty States */}
+                                                {viewMode === 'total' && filteredEmployees.length === 0 && (
+                                                    <tr><td colSpan="10" className="p-6 text-center text-gray-500">No employees found.</td></tr>
+                                                )}
+                                                {viewMode === 'present' && employees.filter(e => e.status === "Present").length === 0 && (
+                                                    <tr><td colSpan="10" className="p-6 text-center text-gray-500">No employees present today.</td></tr>
+                                                )}
+                                                {viewMode === 'absent' && employees.filter(e => e.status === "Absent").length === 0 && (
+                                                    <tr><td colSpan="10" className="p-6 text-center text-gray-500">No employees absent today.</td></tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )
                             ) : (
                                 // ATTENDANCE SHEET (GROUPED HISTORY VIEW - SIMPLIFIED)
                                 <div className="flex flex-col gap-6 p-4">
 
                                     {/* Filter Navbar */}
-                                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-6">
-
-                                        <div className="flex flex-wrap items-end gap-4">
+                                    <div className="p-5 bg-white border border-gray-100 flex flex-col gap-5 shadow-sm rounded-xl mb-6">
+                                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 w-full items-end">
                                             {/* From Date */}
-                                            <div className="flex flex-col">
-                                                <label className="text-xs font-bold text-gray-500 uppercase mb-1">From Date</label>
-                                                <input
-                                                    type="date"
-                                                    value={attendanceFilters.fromDate || ""}
-                                                    onChange={(e) => setAttendanceFilters({ ...attendanceFilters, fromDate: e.target.value })}
-                                                    className="w-[160px] px-4 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white text-gray-700 font-medium h-[38px]"
-                                                />
+                                            <div className="w-full">
+                                                <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">From Date</label>
+                                                <div className="relative">
+                                                    <input
+                                                        type="date"
+                                                        value={attendanceFilters.fromDate || ""}
+                                                        max={attendanceFilters.toDate || undefined}
+                                                        onChange={(e) => setAttendanceFilters({ ...attendanceFilters, fromDate: e.target.value })}
+                                                        className="w-full h-[40px] px-3 py-2 pl-9 rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 text-gray-700 placeholder:text-gray-400"
+                                                    />
+                                                    <FaCalendarAlt className="absolute left-3 top-[12px] text-gray-400 text-xs" />
+                                                </div>
                                             </div>
 
                                             {/* To Date */}
-                                            <div className="flex flex-col">
-                                                <label className="text-xs font-bold text-gray-500 uppercase mb-1">To Date</label>
-                                                <input
-                                                    type="date"
-                                                    value={attendanceFilters.toDate || ""}
-                                                    onChange={(e) => setAttendanceFilters({ ...attendanceFilters, toDate: e.target.value })}
-                                                    className="w-[160px] px-4 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white text-gray-700 font-medium h-[38px]"
-                                                />
+                                            <div className="w-full">
+                                                <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">To Date</label>
+                                                <div className="relative">
+                                                    <input
+                                                        type="date"
+                                                        value={attendanceFilters.toDate || ""}
+                                                        min={attendanceFilters.fromDate || undefined}
+                                                        onChange={(e) => setAttendanceFilters({ ...attendanceFilters, toDate: e.target.value })}
+                                                        className="w-full h-[40px] px-3 py-2 pl-9 rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 text-gray-700 placeholder:text-gray-400"
+                                                    />
+                                                    <FaCalendarAlt className="absolute left-3 top-[12px] text-gray-400 text-xs" />
+                                                </div>
                                             </div>
 
-                                            {/* Name Filter */}
-                                            <div className="flex flex-col">
-                                                <label className="text-xs font-bold text-gray-500 uppercase mb-1">Employee Name</label>
-                                                <input
-                                                    type="text"
-                                                    placeholder="Search Name..."
-                                                    value={attendanceFilters.name}
-                                                    onChange={(e) => setAttendanceFilters({ ...attendanceFilters, name: e.target.value })}
-                                                    className="w-[200px] px-4 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white text-gray-700 font-medium h-[38px]"
-                                                />
-                                            </div>
+                                            {/* Unified Employee Search */}
+                                            <div className="w-full relative col-span-2" ref={attendanceSearchWrapperRef}>
+                                                <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Employee Search</label>
+                                                <div className="relative flex items-center w-full">
+                                                    <FaSearch className="absolute left-3 text-gray-400 text-xs" />
+                                                    <input
+                                                        type="text"
+                                                        className="w-full h-[40px] pl-8 pr-4 rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 text-gray-700 font-medium placeholder:text-gray-400"
+                                                        placeholder="Search Name, ID, or Dept..."
+                                                        value={attendanceEmployeeSearch}
+                                                        onChange={(e) => {
+                                                            setAttendanceEmployeeSearch(e.target.value);
+                                                            setAttendanceFilters({ ...attendanceFilters, employee: e.target.value });
+                                                            setIsAttendanceEmployeeDropdownOpen(true);
+                                                        }}
+                                                        onFocus={() => setIsAttendanceEmployeeDropdownOpen(true)}
+                                                    />
+                                                </div>
 
-                                            {/* ID Filter */}
-                                            <div className="flex flex-col">
-                                                <label className="text-xs font-bold text-gray-500 uppercase mb-1">Employee ID</label>
-                                                <input
-                                                    type="text"
-                                                    placeholder="Search ID..."
-                                                    value={attendanceFilters.employeeId}
-                                                    onChange={(e) => setAttendanceFilters({ ...attendanceFilters, employeeId: e.target.value })}
-                                                    className="w-[160px] px-4 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white text-gray-700 font-medium h-[38px]"
-                                                />
+                                                {/* Dropdown UI */}
+                                                {isAttendanceEmployeeDropdownOpen && (
+                                                    <div className="absolute top-[65px] left-0 w-full bg-white border border-gray-100 rounded-xl shadow-2xl max-h-[200px] overflow-y-auto z-[999] custom-scrollbar">
+                                                        {employees.filter(e => {
+                                                            const query = attendanceEmployeeSearch.toLowerCase().trim();
+                                                            if (!query) return true;
+                                                            return e.name?.toLowerCase().includes(query) ||
+                                                                e.employeeId?.toLowerCase().includes(query) ||
+                                                                (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
+                                                        }).length > 0 ? (
+                                                            employees.filter(e => {
+                                                                const query = attendanceEmployeeSearch.toLowerCase().trim();
+                                                                if (!query) return true;
+                                                                return e.name?.toLowerCase().includes(query) ||
+                                                                    e.employeeId?.toLowerCase().includes(query) ||
+                                                                    (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
+                                                            }).map((emp, i) => (
+                                                                <div
+                                                                    key={emp._id || i}
+                                                                    onClick={() => {
+                                                                        setAttendanceEmployeeSearch(emp.name);
+                                                                        setAttendanceFilters({ ...attendanceFilters, employee: emp.name });
+                                                                        setIsAttendanceEmployeeDropdownOpen(false);
+                                                                    }}
+                                                                    className="p-3 px-4 border-b border-gray-50 flex items-center gap-2 cursor-pointer hover:bg-indigo-50/50 transition-colors w-full overflow-hidden"
+                                                                >
+                                                                    <span className="font-bold text-gray-800 text-[12px] uppercase whitespace-nowrap shrink-0">{emp.name}</span>
+                                                                    <span className="text-gray-300 shrink-0">—</span>
+                                                                    <span title={Array.isArray(emp.role) ? emp.role.join(', ') : (emp.role || 'No Dept')} className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider shadow-sm truncate min-w-0">
+                                                                        {Array.isArray(emp.role) ? emp.role.join(', ') : (emp.role || 'No Dept')}
+                                                                    </span>
+                                                                    <span className="text-gray-300 shrink-0">—</span>
+                                                                    <span className="text-gray-500 text-[11px] font-mono uppercase tracking-wider shrink-0">{emp.employeeId}</span>
+                                                                </div>
+                                                            ))
+                                                        ) : (
+                                                            <div className="p-4 text-xs text-gray-500 text-center">No matching employees found</div>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
 
                                             {/* Status Filter */}
-                                            <div className="flex flex-col">
-                                                <label className="text-xs font-bold text-gray-500 uppercase mb-1">Status</label>
-                                                <select
+                                            <div className="w-full">
+                                                <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Status</label>
+                                                <CustomDropdown
+                                                    options={[
+                                                        { value: "", label: "All Statuses" },
+                                                        { value: "Present", label: "Present" },
+                                                        { value: "Absent", label: "Absent" }
+                                                    ]}
                                                     value={attendanceFilters.status}
-                                                    onChange={(e) => setAttendanceFilters({ ...attendanceFilters, status: e.target.value })}
-                                                    className="w-[160px] px-4 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white text-gray-700 font-medium appearance-none cursor-pointer h-[38px]"
-                                                >
-                                                    <option value="">All Statuses</option>
-                                                    <option value="Present">Present</option>
-                                                    <option value="Absent">Absent</option>
-                                                </select>
+                                                    onChange={(val) => setAttendanceFilters({ ...attendanceFilters, status: val })}
+                                                    placeholder="All Statuses"
+                                                />
                                             </div>
+                                        </div>
 
-                                            {/* Reset Button */}
-                                            <div className="flex flex-col">
-                                                <div className="h-[21px] mb-1"></div> {/* Spacer for alignment with labels */}
-                                                <button
-                                                    onClick={() => setAttendanceFilters({ fromDate: "", toDate: "", name: "", employeeId: "", status: "" })}
-                                                    className="px-4 h-[38px] bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 rounded-lg text-sm font-bold transition-all shadow-sm active:scale-95 flex items-center justify-center"
-                                                >
-                                                    Reset Filters
-                                                </button>
-                                            </div>
-
-                                            {/* Conditional Stats - Only show if any filter is active */}
-                                            {(attendanceFilters.fromDate || attendanceFilters.toDate || attendanceFilters.name || attendanceFilters.employeeId || attendanceFilters.status) && (
-                                                <>
-                                                    <div className="w-px h-[38px] bg-gray-200 mx-2"></div> {/* Divider */}
-
-                                                    {/* Present Box */}
-                                                    <div className="flex flex-col">
-                                                        <div className="h-[21px] mb-1"></div>
-                                                        <div className="flex items-center justify-center gap-2 px-3 h-[38px] bg-emerald-50 border border-emerald-100 rounded-lg shadow-sm min-w-[100px]">
-                                                            <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                                                            <span className="text-emerald-700 font-bold text-sm">Present: {presentCount}</span>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* Absent Box */}
-                                                    <div className="flex flex-col">
-                                                        <div className="h-[21px] mb-1"></div>
-                                                        <div className="flex items-center justify-center gap-2 px-3 h-[38px] bg-rose-50 border border-rose-100 rounded-lg shadow-sm min-w-[100px]">
-                                                            <div className="w-2 h-2 rounded-full bg-rose-500"></div>
-                                                            <span className="text-rose-700 font-bold text-sm">Absent: {absentCount}</span>
-                                                        </div>
-                                                    </div>
-                                                </>
-                                            )}
+                                        {/* Action Buttons */}
+                                        <div className="flex justify-end gap-3 w-full">
+                                            <button
+                                                onClick={() => {
+                                                    const emptyFilters = { fromDate: "", toDate: "", employee: "", status: "" };
+                                                    setAttendanceFilters(emptyFilters);
+                                                    setAppliedAttendanceFilters(emptyFilters);
+                                                    setAttendanceEmployeeSearch("");
+                                                }}
+                                                className="h-[40px] px-5 bg-red-50 hover:bg-red-100 text-red-500 rounded-md text-base font-bold transition-all shadow-sm active:scale-95 flex items-center justify-center shrink-0"
+                                                title="Reset Filters"
+                                            >
+                                                <FaRedo />
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    setAppliedAttendanceFilters(attendanceFilters);
+                                                    setIsAttendanceEmployeeDropdownOpen(false);
+                                                }}
+                                                className="h-[40px] px-8 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-sm font-bold transition-all shadow-sm active:scale-95 flex items-center justify-center gap-2"
+                                                title="Fetch Data"
+                                            >
+                                                <FaSearch className="w-4 h-4 font-bold" />
+                                                Fetch Data
+                                            </button>
                                         </div>
                                     </div>
 
                                     {viewMode === 'attendance_sheet' && Object.entries(groupAttendanceByDate(filteredHistory)).map(([group, records]) => {
                                         if (records.length === 0) return null;
+                                        const groupPresentCount = records.filter(r => r.status === "Present").length;
+                                        const groupAbsentCount = records.filter(r => r.status === "Absent").length;
+
                                         return (
                                             <div key={group} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm mt-4">
-                                                <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
+                                                <div className="bg-gray-50 px-6 py-3 border-b border-gray-200 flex justify-between items-center">
                                                     <h4 className="font-bold text-gray-700 uppercase tracking-widest text-xs">
-                                                        {group === 'OldDays' ? 'Older Records' : group.replace(/([A-Z])/g, ' $1').trim()}
+                                                        {group}
                                                     </h4>
+                                                    <div className="flex gap-4">
+                                                        <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">
+                                                            Present: <span className="bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">{groupPresentCount.toString().padStart(2, '0')}</span>
+                                                        </span>
+                                                        <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider">
+                                                            Absent: <span className="bg-rose-50 px-2 py-0.5 rounded border border-rose-100">{groupAbsentCount.toString().padStart(2, '0')}</span>
+                                                        </span>
+                                                    </div>
                                                 </div>
                                                 <div className="overflow-x-auto">
                                                     <table className="w-full text-left border-collapse">
@@ -1106,14 +1345,14 @@ const Dashboard = () => {
                                                         <thead className="bg-white text-gray-500 text-xs uppercase tracking-wider border-b border-gray-100">
                                                             <tr>
                                                                 <th className="p-4 font-medium">Full Name</th>
-                                                                <th className="p-4 font-medium">Department</th>
-                                                                <th className="p-4 font-medium text-center">Login Time</th>
-                                                                <th className="p-4 font-medium text-center">Login Hours</th>
-                                                                <th className="p-4 font-medium text-center text-emerald-600">Active Hours</th>
-                                                                <th className="p-4 font-medium text-center text-amber-600">Idle Hours</th>
-                                                                <th className="p-4 font-medium text-center">Logout Time</th>
-                                                                <th className="p-4 font-medium text-center text-indigo-600">Total Hours</th>
-                                                                <th className="p-4 font-medium text-center text-purple-600">Log Hours</th>
+                                                                <th className="p-4 font-medium text-center bg-slate-100/40">Login Time</th>
+                                                                <th className="p-4 font-medium text-center bg-slate-100/40">Logout Time</th>
+                                                                <th className="p-4 font-medium text-center text-rose-600 bg-slate-100/40">Inactive Hours</th>
+                                                                <th className="p-4 font-medium text-center text-amber-600 bg-indigo-100/40">Idle Hours</th>
+                                                                <th className="p-4 font-medium text-center text-purple-600 bg-indigo-100/40">QT Hours</th>
+                                                                <th className="p-4 font-medium text-center text-emerald-600 bg-teal-100/40">Active Hours</th>
+                                                                <th className="p-4 font-medium text-center text-rose-600 bg-teal-100/40">Meeting Hours</th>
+                                                                <th className="font-medium text-center text-indigo-600 bg-teal-100/40">Total Working Hours</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody className="divide-y divide-gray-50">
@@ -1123,38 +1362,39 @@ const Dashboard = () => {
                                                                     <tr key={`${recordData._id}`} className="hover:bg-blue-50/30 transition-colors text-sm text-gray-700">
                                                                         <td className="p-4">
                                                                             <div className="font-bold text-gray-800">{emp?.name || "Unknown"}</div>
-                                                                        </td>
-                                                                        <td className="p-4">
-                                                                            <div className="flex flex-wrap gap-1">
+                                                                            <div className="flex flex-wrap gap-1 mt-1">
                                                                                 {Array.isArray(emp?.role) ? emp.role.map((r, i) => (
-                                                                                    <span key={i} className="px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-normal">
+                                                                                    <span key={i} className="px-2 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-100 whitespace-normal">
                                                                                         {r}
                                                                                     </span>
                                                                                 )) : (
-                                                                                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-normal">{emp?.role}</span>
+                                                                                    <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-100 whitespace-normal">{emp?.role}</span>
                                                                                 )}
                                                                             </div>
                                                                         </td>
-                                                                        <td className="p-4 font-mono text-gray-600 text-xs text-center">
+                                                                        <td className="p-4 font-mono text-gray-600 text-xs text-center bg-slate-100/40">
                                                                             {recordData.loginTime ? new Date(recordData.loginTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-"}
                                                                         </td>
-                                                                        <td className="p-4 font-mono text-gray-700 font-bold text-xs text-center">
-                                                                            {formatHHMMSS(recordData.activeTime + recordData.idleTime)}
-                                                                        </td>
-                                                                        <td className="p-4 font-mono text-emerald-600 font-bold text-xs text-center">
-                                                                            {recordData.formattedActiveTime || "00:00:00"}
-                                                                        </td>
-                                                                        <td className="p-4 font-mono text-amber-600 font-bold text-xs text-center">
-                                                                            {recordData.formattedIdleTime || "00:00:00"}
-                                                                        </td>
-                                                                        <td className="p-4 font-mono text-indigo-600 font-bold text-xs text-center">
+                                                                        <td className="p-4 font-mono text-gray-500 font-bold text-xs text-center bg-slate-100/40">
                                                                             {recordData.logoutTime ? new Date(recordData.logoutTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-"}
                                                                         </td>
-                                                                        <td className="p-4 font-mono text-indigo-600 font-bold text-xs text-center">
-                                                                            {calculateDayHours(recordData.loginTime, recordData.logoutTime)}
+                                                                        <td className="p-4 font-mono text-rose-600 font-bold text-xs text-center bg-slate-100/40">
+                                                                            {calculateInactiveHours(recordData.formattedActiveTime, recordData.formattedIdleTime)}
                                                                         </td>
-                                                                        <td className="p-4 font-mono text-purple-600 font-bold text-xs text-center">
-                                                                            {recordData.logHours || "-"}
+                                                                        <td className="p-4 font-mono text-amber-600 font-bold text-xs text-center bg-indigo-100/40">
+                                                                            {recordData.formattedIdleTime || "00:00:00"}
+                                                                        </td>
+                                                                        <td className="p-4 font-mono text-purple-600 font-bold text-xs text-center bg-indigo-100/40">
+                                                                            {recordData.qtHours || "00:00:00"}
+                                                                        </td>
+                                                                        <td className="p-4 font-mono text-emerald-600 font-bold text-xs text-center bg-teal-100/40">
+                                                                            {recordData.formattedActiveTime || "00:00:00"}
+                                                                        </td>
+                                                                        <td className="font-mono text-rose-600 font-bold text-xs text-center bg-teal-100/40">
+                                                                            {recordData.meetingHours || "00:00:00"}
+                                                                        </td>
+                                                                        <td className="font-mono text-indigo-600 font-bold text-xs text-center bg-teal-100/40">
+                                                                            {addTimes(recordData.formattedActiveTime, recordData.meetingHours)}
                                                                         </td>
                                                                     </tr>
                                                                 );
@@ -1178,164 +1418,325 @@ const Dashboard = () => {
                         ['total_projects', 'total_tasks', 'pending_tasks', 'active_tasks'].includes(viewMode) && (
                             <div className="bg-white rounded-xl shadow-sm border border-gray-100 mb-8">
                                 <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-                                    <h3 className="text-lg font-bold text-gray-800">
-                                        {viewMode === 'total_projects' && "All Project Tasks"}
-                                        {viewMode === 'total_tasks' && "All Tasks"}
-                                        {viewMode === 'pending_tasks' && "Pending Tasks"}
-                                        {viewMode === 'active_tasks' && "Active Tasks"}
+                                    <h3 className="text-lg font-extrabold text-slate-800 tracking-wider uppercase">
+                                        {viewMode === 'total_projects' && "TOTAL PROJECTS"}
+                                        {viewMode === 'total_tasks' && "TOTAL TASKS"}
+                                        {viewMode === 'pending_tasks' && "PENDING TASKS"}
+                                        {viewMode === 'active_tasks' && "ACTIVE TASKS"}
                                     </h3>
                                 </div>
 
                                 {/* Task Filter Navbar */}
-                                <div className="p-4 bg-gray-50 border-b border-gray-100 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 items-end">
-                                    {/* From Date */}
-                                    <div>
-                                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">From Date</label>
-                                        <div className="relative">
-                                            <input
-                                                type="date"
-                                                value={taskFilters.fromDate}
-                                                onChange={(e) => setTaskFilters({ ...taskFilters, fromDate: e.target.value })}
-                                                className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white text-gray-700 font-medium h-[38px]"
-                                            />
-                                            <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                                <div className="p-5 bg-white border border-gray-100 flex flex-col gap-5 shadow-sm rounded-xl mb-6">
+                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 w-full items-end">
+                                        {/* From Date */}
+                                        <div className="w-full">
+                                            <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">From Date</label>
+                                            <div className="relative">
+                                                <input
+                                                    type="date"
+                                                    value={taskFilters.fromDate}
+                                                    max={taskFilters.toDate || undefined}
+                                                    onChange={(e) => setTaskFilters({ ...taskFilters, fromDate: e.target.value })}
+                                                    className="w-full h-[40px] px-3 py-2 pl-9 rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 text-gray-700 placeholder:text-gray-400"
+                                                />
+                                                <FaCalendarAlt className="absolute left-3 top-[12px] text-gray-400 text-xs" />
+                                            </div>
                                         </div>
+
+                                        {/* To Date */}
+                                        <div className="w-full">
+                                            <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">To Date</label>
+                                            <div className="relative">
+                                                <input
+                                                    type="date"
+                                                    value={taskFilters.toDate}
+                                                    min={taskFilters.fromDate || undefined}
+                                                    onChange={(e) => setTaskFilters({ ...taskFilters, toDate: e.target.value })}
+                                                    className="w-full h-[40px] px-3 py-2 pl-9 rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 text-gray-700 placeholder:text-gray-400"
+                                                />
+                                                <FaCalendarAlt className="absolute left-3 top-[12px] text-gray-400 text-xs" />
+                                            </div>
+                                        </div>
+
+                                        {/* Project Filter */}
+                                        <div className="w-full">
+                                            <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Project Name</label>
+                                            <CustomDropdown
+                                                options={[
+                                                    { value: "", label: "All Projects" },
+                                                    ...uniqueProjects.map(p => ({ value: p }))
+                                                ]}
+                                                value={taskFilters.projectName}
+                                                onChange={(val) => setTaskFilters({ ...taskFilters, projectName: val })}
+                                                placeholder="All Projects"
+                                                searchable={true}
+                                            />
+                                        </div>
+
+                                        {/* Employee Profile Filter */}
+                                        <div className="w-full relative col-span-2 md:col-span-1 lg:col-span-2" ref={taskSearchWrapperRef}>
+                                            <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Employee Profile</label>
+                                            <div className="relative flex items-center w-full">
+                                                <FaSearch className="absolute left-3 text-gray-400 text-xs" />
+                                                <input
+                                                    type="text"
+                                                    className="w-full h-[40px] px-3 py-2 pl-8 pr-4 rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 text-gray-700 font-medium placeholder:text-gray-400"
+                                                    placeholder="Search Employee..."
+                                                    value={taskEmployeeSearch}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        setTaskEmployeeSearch(val);
+                                                        if (val === "") {
+                                                            setTaskFilters({ ...taskFilters, assignedTo: "" });
+                                                        }
+                                                        setIsTaskEmployeeDropdownOpen(true);
+                                                    }}
+                                                    onFocus={() => setIsTaskEmployeeDropdownOpen(true)}
+                                                />
+                                            </div>
+
+                                            {/* Dropdown UI */}
+                                            {isTaskEmployeeDropdownOpen && (
+                                                <div className="absolute top-[65px] left-0 w-full bg-white border border-gray-100 rounded-xl shadow-2xl max-h-[200px] overflow-y-auto z-[999] custom-scrollbar">
+                                                    {employees.filter(e => {
+                                                        const query = taskEmployeeSearch.toLowerCase().trim();
+                                                        if (!query) return true;
+                                                        return e.name?.toLowerCase().includes(query) ||
+                                                            e.employeeId?.toLowerCase().includes(query) ||
+                                                            (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
+                                                    }).length > 0 ? (
+                                                        employees.filter(e => {
+                                                            const query = taskEmployeeSearch.toLowerCase().trim();
+                                                            if (!query) return true;
+                                                            return e.name?.toLowerCase().includes(query) ||
+                                                                e.employeeId?.toLowerCase().includes(query) ||
+                                                                (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
+                                                        }).map((emp, i) => (
+                                                            <div
+                                                                key={emp._id || i}
+                                                                onClick={() => {
+                                                                    setTaskEmployeeSearch(emp.name);
+                                                                    setTaskFilters({ ...taskFilters, assignedTo: emp._id });
+                                                                    setIsTaskEmployeeDropdownOpen(false);
+                                                                }}
+                                                                className="p-3 px-4 border-b border-gray-50 flex items-center gap-2 cursor-pointer hover:bg-indigo-50/50 transition-colors w-full overflow-hidden"
+                                                            >
+                                                                <span className="font-bold text-gray-800 text-[12px] uppercase whitespace-nowrap shrink-0">{emp.name}</span>
+                                                                <span className="text-gray-300 shrink-0">—</span>
+                                                                <span title={Array.isArray(emp.role) ? emp.role.join(', ') : (emp.role || 'No Dept')} className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider shadow-sm truncate min-w-0">
+                                                                    {Array.isArray(emp.role) ? emp.role.join(', ') : (emp.role || 'No Dept')}
+                                                                </span>
+                                                                <span className="text-gray-300 shrink-0">—</span>
+                                                                <span className="text-gray-500 text-[11px] font-mono uppercase tracking-wider shrink-0 break-keep">{emp.employeeId}</span>
+                                                            </div>
+                                                        ))
+                                                    ) : (
+                                                        <div className="p-4 text-xs text-gray-500 text-center flex flex-col items-center justify-center gap-2">
+                                                            <FaExclamationCircle className="text-gray-300 text-xl" />
+                                                            <p>No matches for "<span className="font-semibold text-gray-700">{taskEmployeeSearch}</span>"</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Status Filter (Only for Total Views) */}
+                                        {(viewMode === 'total_projects' || viewMode === 'total_tasks') && (
+                                            <div className="w-full">
+                                                <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Status</label>
+                                                <CustomDropdown
+                                                    options={[
+                                                        { value: "", label: "All Statuses" },
+                                                        ...uniqueTaskStatuses.map(s => ({ value: s }))
+                                                    ]}
+                                                    value={taskFilters.status}
+                                                    onChange={(val) => setTaskFilters({ ...taskFilters, status: val })}
+                                                    placeholder="All Statuses"
+                                                />
+                                            </div>
+                                        )}
                                     </div>
 
-                                    {/* To Date */}
-                                    <div>
-                                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">To Date</label>
-                                        <div className="relative">
-                                            <input
-                                                type="date"
-                                                value={taskFilters.toDate}
-                                                onChange={(e) => setTaskFilters({ ...taskFilters, toDate: e.target.value })}
-                                                className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white text-gray-700 font-medium h-[38px]"
-                                            />
-                                            <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
-                                        </div>
-                                    </div>
-
-                                    {/* Project Filter */}
-                                    <CustomDropdown
-                                        label="Project"
-                                        options={[
-                                            { value: "", label: "All Projects" },
-                                            ...uniqueProjects.map(p => ({ value: p, label: p, icon: FaProjectDiagram }))
-                                        ]}
-                                        value={taskFilters.projectName}
-                                        onChange={(val) => setTaskFilters({ ...taskFilters, projectName: val })}
-                                        placeholder="All Projects"
-                                    />
-
-                                    {/* Assigned To Filter */}
-                                    <CustomDropdown
-                                        label="Assigned To"
-                                        options={[
-                                            { value: "", label: "All Employees" },
-                                            ...employees.map(e => ({ value: e._id, label: e.name, icon: FaUser }))
-                                        ]}
-                                        value={taskFilters.assignedTo}
-                                        onChange={(val) => setTaskFilters({ ...taskFilters, assignedTo: val })}
-                                        placeholder="All Employees"
-                                    />
-
-                                    {/* Status Filter (Only for Total Views) */}
-                                    {(viewMode === 'total_projects' || viewMode === 'total_tasks') && (
-                                        <CustomDropdown
-                                            label="Status"
-                                            options={[
-                                                { value: "", label: "All Statuses" },
-                                                ...uniqueTaskStatuses.map(s => ({ value: s, label: s, icon: FaTasks }))
-                                            ]}
-                                            value={taskFilters.status}
-                                            onChange={(val) => setTaskFilters({ ...taskFilters, status: val })}
-                                            placeholder="All Statuses"
-                                        />
-                                    )}
-
-                                    {/* Reset Button */}
-                                    <div className="flex justify-end lg:justify-start">
+                                    {/* Action Buttons */}
+                                    <div className="flex justify-end gap-3 w-full">
                                         <button
-                                            onClick={() => setTaskFilters({ projectName: "", assignedTo: "", fromDate: "", toDate: "", status: "" })}
-                                            className="h-[38px] w-[38px] bg-red-50 hover:bg-red-100 text-red-500 border border-red-100 rounded-full text-sm font-bold transition-all shadow-sm active:scale-95 flex items-center justify-center"
+                                            onClick={() => {
+                                                const emptyFilters = { projectName: "", assignedTo: "", fromDate: "", toDate: "", status: "" };
+                                                setTaskFilters(emptyFilters);
+                                                setAppliedTaskFilters(emptyFilters);
+                                                setTaskEmployeeSearch("");
+                                            }}
+                                            className="h-[40px] px-5 bg-red-50 hover:bg-red-100 text-red-500 rounded-md text-base font-bold transition-all flex items-center justify-center shrink-0"
                                             title="Reset Filters"
                                         >
                                             <FaRedo />
                                         </button>
+                                        <button
+                                            onClick={() => setAppliedTaskFilters(taskFilters)}
+                                            className="h-[40px] px-8 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-sm font-bold transition-all shadow-sm active:scale-95 flex items-center justify-center gap-2"
+                                            title="Apply Filters"
+                                        >
+                                            <svg className="w-4 h-4 font-bold" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                                            Fetch Data
+                                        </button>
                                     </div>
                                 </div>
 
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left border-collapse min-w-[1000px]">
-                                        <thead>
-                                            <tr className="bg-gray-50/50 text-left border-b border-gray-200">
-                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[3%] text-center">S.No</th>
-                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Assigned By & To</th>
-                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Project Name</th>
-                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Task Title</th>
-                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[20%]">Description</th>
-                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[6%]">Start Date</th>
-                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Status</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-gray-100">
-                                            {filteredTasks.length === 0 ? (
-                                                <tr>
-                                                    <td colSpan="7" className="px-6 py-8 text-center text-gray-500">
-                                                        No tasks found.
-                                                    </td>
-                                                </tr>
-                                            ) : (
-                                                filteredTasks.map((task, index) => (
-                                                    <tr key={task._id}
-                                                        onClick={() => setSelectedTaskForDetails(task)}
-                                                        className="hover:bg-indigo-50/30 transition-colors group cursor-pointer text-sm border-b border-gray-50 last:border-none">
-                                                        <td className="px-6 py-4 text-center text-gray-400 font-mono text-xs align-middle">
-                                                            {(index + 1).toString().padStart(2, '0')}
-                                                        </td>
-                                                        <td className="px-6 py-4 text-gray-600 align-middle">
-                                                            <div className="flex flex-col gap-1.5">
-                                                                <div className="flex items-center gap-2 text-xs bg-gray-50 px-2 py-1 rounded border border-gray-100 w-fit">
-                                                                    <span className="text-gray-400 font-semibold uppercase text-[10px]">By</span>
-                                                                    <span className="font-bold text-gray-700">{task.assignedBy?.name || "Admin"}</span>
-                                                                </div>
-                                                                <div className="flex items-center gap-2 text-xs bg-indigo-50 px-2 py-1 rounded border border-indigo-100 w-fit">
-                                                                    <span className="text-indigo-400 font-semibold uppercase text-[10px]">To</span>
-                                                                    <span className="font-bold text-indigo-700">
-                                                                        {(() => {
-                                                                            const assignees = task.assignedTo || [];
-                                                                            if (assignees.length === 0) return "UNASSIGNED";
-                                                                            return assignees.map(item => {
-                                                                                if (typeof item === 'object' && item !== null && item.name) return item.name;
-                                                                                const emp = employees.find(e => e._id === item);
-                                                                                return emp ? emp.name : "Unknown";
-                                                                            }).join(", ");
-                                                                        })()}
-                                                                    </span>
-                                                                </div>
+                                <div className="mb-18">
+                                    {isTableLoading ? (
+                                        <TableLoader />
+                                    ) : (
+                                        Object.keys(groupedTasks).length === 0 ? (
+                                            <div className="w-full bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center text-gray-500 mt-4">
+                                                No tasks found.
+                                            </div>
+                                        ) : (
+                                            Object.keys(groupedTasks).map((dateLabel) => {
+                                                const tasksInGroup = groupedTasks[dateLabel];
+                                                return (
+                                                    <div key={dateLabel} className="mb-8 mt-4">
+                                                        <h3 className="text-md font-bold text-gray-800 uppercase tracking-wider mb-4 flex items-center gap-2 ml-7">
+                                                            {dateLabel} <span className="text-xs font-medium text-gray-400 normal-case">({tasksInGroup.length} tasks / {getUniqueEmployeeCount(tasksInGroup)} emp)</span>
+                                                        </h3>
+                                                        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                                                            <div className="w-full overflow-x-auto custom-scrollbar">
+                                                                <table className="w-full text-left border-collapse min-w-[1000px] table-fixed">
+                                                                    <thead>
+                                                                        <tr className="bg-gray-50/50 text-left border-b border-gray-200">
+                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[5%] text-center">S.No</th>
+                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%]">Assigned By & To</th>
+                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%]">Project Name</th>
+                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[25%]">Description</th>
+                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[10%]">Priority</th>
+                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[10%]">Status</th>
+                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[8%] text-center">Chats</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody className="divide-y divide-gray-100">
+                                                                        {tasksInGroup.map((task, index) => (
+                                                                            <tr key={task._id}
+                                                                                onClick={() => setSelectedTaskForDetails(task)}
+                                                                                className="hover:bg-indigo-50/30 transition-all duration-200 group cursor-pointer h-20 border-l-4 border-transparent hover:border-indigo-500 bg-white"
+                                                                            >
+                                                                                {/* S.No */}
+                                                                                <td className="px-6 py-4 align-middle text-center w-[5%]">
+                                                                                    <div className="flex flex-col items-center justify-center gap-1.5">
+                                                                                        <span className="text-gray-400 font-mono text-xs font-medium">
+                                                                                            {(index + 1).toString().padStart(2, '0')}
+                                                                                        </span>
+                                                                                        <div
+                                                                                            className={`w-2 h-2 rounded-sm shadow-sm ${task.logType === 'Offline Task' || task.isPendingOffline
+                                                                                                ? 'bg-rose-500' // Red for Offline
+                                                                                                : 'bg-emerald-500' // Green for Online
+                                                                                                }`}
+                                                                                            title={task.logType === 'Offline Task' || task.isPendingOffline ? 'Offline Task' : 'Online Task'}
+                                                                                        ></div>
+                                                                                    </div>
+                                                                                </td>
+
+                                                                                {/* Assigned By & To */}
+                                                                                <td className="px-6 py-4 align-middle">
+                                                                                    <div className="flex flex-col gap-1.5">
+                                                                                        <div className="flex items-center gap-2">
+                                                                                            <span className="text-[10px] uppercase font-bold text-gray-400 w-6">By:</span>
+                                                                                            <span className="text-xs font-bold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full truncate max-w-[120px]" title={task.assignedBy?.name}>
+                                                                                                {task.assignedBy?.name || "Admin"}
+                                                                                            </span>
+                                                                                        </div>
+                                                                                        <div className="flex items-center gap-2">
+                                                                                            <span className="text-[10px] uppercase font-bold text-gray-400 w-6">To:</span>
+                                                                                            <div className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full truncate max-w-[150px]" title={(() => {
+                                                                                                let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
+                                                                                                if (!targets || targets.length === 0) {
+                                                                                                    return task.assignType === "Overall" ? "Overall (All)" : "Unassigned";
+                                                                                                }
+                                                                                                return targets.map(assigneeId => {
+                                                                                                    if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
+                                                                                                    const emp = employees.find(e => e._id === assigneeId);
+                                                                                                    return emp ? emp.name : assigneeId;
+                                                                                                }).join(", ");
+                                                                                            })()}>
+                                                                                                {(() => {
+                                                                                                    let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
+                                                                                                    if (!targets || targets.length === 0) {
+                                                                                                        return task.assignType === "Overall" ? "Overall (All)" : "Unassigned";
+                                                                                                    }
+                                                                                                    return targets.map(assigneeId => {
+                                                                                                        if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
+                                                                                                        const emp = employees.find(e => e._id === assigneeId);
+                                                                                                        return emp ? emp.name : assigneeId;
+                                                                                                    }).join(", ");
+                                                                                                })()}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                </td>
+
+                                                                                {/* Project Name */}
+                                                                                <td className="px-6 py-4 text-sm font-bold text-gray-800 truncate align-middle" title={task.projectName}>
+                                                                                    {task.projectName}
+                                                                                </td>
+
+                                                                                {/* Description */}
+                                                                                <td className="px-6 py-4 align-middle">
+                                                                                    <div className="flex flex-col gap-1.5 items-start">
+                                                                                        <span className="text-sm font-medium text-gray-600 truncate max-w-[300px]" title={task.description || task.taskTitle}>
+                                                                                            {task.description || task.taskTitle}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                </td>
+
+                                                                                {/* Priority */}
+                                                                                <td className="px-6 py-4 align-middle">
+                                                                                    <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold shadow-sm border ${task.priority === "High" ? "bg-rose-50 text-rose-600 border-rose-100" :
+                                                                                        task.priority === "Medium" ? "bg-amber-50 text-amber-600 border-amber-100" :
+                                                                                            "bg-emerald-50 text-emerald-600 border-emerald-100"
+                                                                                        }`}>
+                                                                                        {task.priority === "High" && <FaExclamationCircle className="mr-1.5 text-[10px]" />}
+                                                                                        {task.priority || "Normal"}
+                                                                                    </span>
+                                                                                </td>
+
+                                                                                {/* Status */}
+                                                                                <td className="px-6 py-4 align-middle">
+                                                                                    <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold border shadow-sm ${task.status === "Completed" ? "bg-emerald-100 text-emerald-800 border-emerald-200" :
+                                                                                        task.status === "In Progress" ? "bg-blue-100 text-blue-800 border-blue-200" :
+                                                                                            task.status === "Hold" ? "bg-amber-100 text-amber-800 border-amber-200" :
+                                                                                                task.status === "Overdue" ? "bg-red-100 text-red-800 border-red-200" :
+                                                                                                    "bg-gray-100 text-gray-800 border-gray-200"
+                                                                                        }`}>
+                                                                                        <span className={`w-1.5 h-1.5 rounded-full mr-2 ${task.status === "Completed" ? "bg-emerald-500" :
+                                                                                            task.status === "In Progress" ? "bg-blue-500" :
+                                                                                                task.status === "Hold" ? "bg-amber-500" :
+                                                                                                    task.status === "Overdue" ? "bg-red-500" :
+                                                                                                        "bg-gray-500"
+                                                                                            }`}></span>
+                                                                                        {task.status}
+                                                                                    </span>
+                                                                                </td>
+
+                                                                                {/* Chats */}
+                                                                                <td className="px-6 py-4 text-center align-middle">
+                                                                                    <button
+                                                                                        onClick={(e) => { e.stopPropagation(); handleChatClick(task._id); }}
+                                                                                        className="inline-flex items-center justify-center h-9 w-9 text-indigo-500 bg-white border border-gray-200 hover:bg-indigo-50 hover:text-indigo-600 rounded-full transition-all shadow-sm hover:shadow active:scale-95 group-hover:border-indigo-200"
+                                                                                        title="Open Chat"
+                                                                                    >
+                                                                                        <FaPaperPlane size={14} />
+                                                                                    </button>
+                                                                                </td>
+                                                                            </tr>
+                                                                        ))}
+                                                                    </tbody>
+                                                                </table>
                                                             </div>
-                                                        </td>
-                                                        <td className="px-6 py-4 font-semibold text-gray-800 align-middle">{task.projectName}</td>
-                                                        <td className="px-6 py-4 font-semibold text-gray-800 align-middle max-w-[150px] truncate" title={task.taskTitle}>{task.taskTitle}</td>
-                                                        <td className="px-6 py-4 text-gray-500 align-middle min-w-[250px]" title={task.description}>
-                                                            <div className="line-clamp-2 leading-relaxed text-xs">{task.description}</div>
-                                                        </td>
-                                                        <td className="px-6 py-4 text-gray-500 font-mono text-xs align-middle whitespace-nowrap">{task.startDate}</td>
-                                                        <td className="px-6 py-4 align-middle">
-                                                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase shadow-sm ${task.status === "Completed" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
-                                                                task.status === "In Progress" ? "bg-blue-50 text-blue-600 border border-blue-100" :
-                                                                    task.status === "Overdue" ? "bg-red-50 text-red-600 border border-red-100" :
-                                                                        "bg-gray-50 text-gray-600 border border-gray-100"
-                                                                }`}>
-                                                                {task.status}
-                                                            </span>
-                                                        </td>
-                                                    </tr>
-                                                ))
-                                            )}
-                                        </tbody>
-                                    </table>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })
+                                        )
+                                    )}
                                 </div>
                             </div>
                         )
@@ -1346,10 +1747,10 @@ const Dashboard = () => {
                         viewMode === 'leave_requests' && (
                             <div className="bg-white rounded-xl shadow-sm border border-gray-100 mb-8 animate-fade-in-up">
                                 <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-                                    <h3 className="text-lg font-bold text-gray-800">Pending Leave Requests</h3>
+                                    <h3 className="text-lg font-extrabold text-slate-800 tracking-wider uppercase">LEAVE REQUESTS</h3>
                                 </div>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left border-collapse">
+                                <div className="w-full overflow-x-auto custom-scrollbar">
+                                    <table className="w-full text-left border-collapse min-w-[600px]">
                                         <thead className="bg-gray-50 text-gray-700 text-sm uppercase tracking-wider">
                                             <tr>
                                                 <th className="p-4 font-bold border-b w-[5%] text-center">S.No</th>
@@ -1404,83 +1805,152 @@ const Dashboard = () => {
                         viewMode === 'all_leaves' && (
                             <div className="bg-white rounded-xl shadow-sm border border-gray-100 mb-8 animate-fade-in-up">
                                 <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-                                    <h3 className="text-lg font-bold text-gray-800">All Leave History</h3>
+                                    <h3 className="text-lg font-extrabold text-slate-800 tracking-wider uppercase">TOTAL LEAVES</h3>
                                 </div>
 
                                 {/* Leave History Filter Navbar */}
-                                <div className="p-4 bg-gray-50 border-b border-gray-100 flex flex-wrap lg:flex-nowrap gap-4 items-end">
-                                    {/* Name Filter */}
-                                    <div className="flex-1 min-w-[200px]">
-                                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Employee Name</label>
-                                        <div className="relative">
-                                            <input
-                                                type="text"
-                                                value={leaveHistoryFilters.name}
-                                                onChange={(e) => setLeaveHistoryFilters({ ...leaveHistoryFilters, name: e.target.value })}
-                                                placeholder="Search Name"
-                                                className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white text-gray-700 font-medium"
+                                <div className="p-5 bg-white border border-gray-100 flex flex-col gap-5 shadow-sm rounded-xl mb-6">
+                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 w-full items-end">
+                                        {/* From Date */}
+                                        <div className="w-full">
+                                            <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Applied From</label>
+                                            <div className="relative">
+                                                <input
+                                                    type="date"
+                                                    value={leaveHistoryFilters.fromDate}
+                                                    max={leaveHistoryFilters.toDate || undefined}
+                                                    onChange={(e) => setLeaveHistoryFilters({ ...leaveHistoryFilters, fromDate: e.target.value })}
+                                                    className="w-full px-3 py-2 pl-9 rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 text-gray-700 h-[40px] placeholder:text-gray-400"
+                                                />
+                                                <FaCalendarAlt className="absolute left-3 top-[12px] text-gray-400 text-xs" />
+                                            </div>
+                                        </div>
+
+                                        {/* To Date */}
+                                        <div className="w-full">
+                                            <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Applied To</label>
+                                            <div className="relative">
+                                                <input
+                                                    type="date"
+                                                    value={leaveHistoryFilters.toDate}
+                                                    min={leaveHistoryFilters.fromDate || undefined}
+                                                    onChange={(e) => setLeaveHistoryFilters({ ...leaveHistoryFilters, toDate: e.target.value })}
+                                                    className="w-full px-3 py-2 pl-9 rounded-md border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 text-gray-700 h-[40px] placeholder:text-gray-400"
+                                                />
+                                                <FaCalendarAlt className="absolute left-3 top-[12px] text-gray-400 text-xs" />
+                                            </div>
+                                        </div>
+
+                                        {/* Employee Profile Filter */}
+                                        <div className="w-full lg:col-span-2 relative" ref={leaveSearchWrapperRef}>
+                                            <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Employee Profile</label>
+                                            <div className="relative flex items-center">
+                                                <FaSearch className="absolute left-3 text-gray-400 text-[10px]" />
+                                                <input
+                                                    type="text"
+                                                    className="w-full h-[40px] pl-8 pr-3 rounded-md border border-gray-200 text-sm bg-gray-50 text-gray-700 placeholder:text-gray-400 outline-none focus:border-indigo-500 transition-all font-medium"
+                                                    placeholder="Search Employee..."
+                                                    value={leaveEmployeeSearch}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        setLeaveEmployeeSearch(val);
+                                                        if (val === "") {
+                                                            setLeaveHistoryFilters({ ...leaveHistoryFilters, employee: "" });
+                                                        }
+                                                        setIsLeaveEmployeeDropdownOpen(true);
+                                                    }}
+                                                    onFocus={() => setIsLeaveEmployeeDropdownOpen(true)}
+                                                />
+                                            </div>
+
+                                            {/* Dropdown UI */}
+                                            {isLeaveEmployeeDropdownOpen && (
+                                                <div className="absolute top-[65px] left-0 w-full bg-white border border-gray-100 rounded-xl shadow-2xl max-h-[200px] overflow-y-auto z-[999] custom-scrollbar">
+                                                    {employees.filter(e => {
+                                                        const query = leaveEmployeeSearch.toLowerCase().trim();
+                                                        if (!query) return true;
+                                                        return e.name?.toLowerCase().includes(query) ||
+                                                            e.employeeId?.toLowerCase().includes(query) ||
+                                                            (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
+                                                    }).length > 0 ? (
+                                                        employees.filter(e => {
+                                                            const query = leaveEmployeeSearch.toLowerCase().trim();
+                                                            if (!query) return true;
+                                                            return e.name?.toLowerCase().includes(query) ||
+                                                                e.employeeId?.toLowerCase().includes(query) ||
+                                                                (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
+                                                        }).map((emp, i) => (
+                                                            <div
+                                                                key={emp._id || i}
+                                                                onClick={() => {
+                                                                    setLeaveEmployeeSearch(emp.name);
+                                                                    setLeaveHistoryFilters({ ...leaveHistoryFilters, employee: emp._id });
+                                                                    setIsLeaveEmployeeDropdownOpen(false);
+                                                                }}
+                                                                className="p-3 px-4 border-b border-gray-50 flex items-center gap-2 cursor-pointer hover:bg-indigo-50/50 transition-colors w-full overflow-hidden"
+                                                            >
+                                                                <span className="font-bold text-gray-800 text-[12px] uppercase whitespace-nowrap shrink-0">{emp.name}</span>
+                                                                <span className="text-gray-300 shrink-0">—</span>
+                                                                <span title={Array.isArray(emp.role) ? emp.role.join(', ') : (emp.role || 'No Dept')} className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider shadow-sm truncate min-w-0">
+                                                                    {Array.isArray(emp.role) ? emp.role.join(', ') : (emp.role || 'No Dept')}
+                                                                </span>
+                                                                <span className="text-gray-300 shrink-0">—</span>
+                                                                <span className="text-gray-500 text-[11px] font-mono uppercase tracking-wider shrink-0 break-keep">{emp.employeeId}</span>
+                                                            </div>
+                                                        ))
+                                                    ) : (
+                                                        <div className="p-4 text-xs text-gray-500 text-center flex flex-col items-center justify-center gap-2">
+                                                            <FaExclamationCircle className="text-gray-300 text-xl" />
+                                                            <p>No matches for "<span className="font-semibold text-gray-700">{leaveEmployeeSearch}</span>"</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Status Filter */}
+                                        <div className="w-full">
+                                            <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Status</label>
+                                            <CustomDropdown
+                                                options={[
+                                                    { value: "", label: "All Statuses" },
+                                                    { value: "Pending", label: "Pending", icon: FaExclamationCircle },
+                                                    { value: "Approved", label: "Approved", icon: FaCheckCircle },
+                                                    { value: "Rejected", label: "Rejected", icon: FaTimes }
+                                                ]}
+                                                value={leaveHistoryFilters.status}
+                                                onChange={(val) => setLeaveHistoryFilters({ ...leaveHistoryFilters, status: val })}
+                                                placeholder="All Statuses"
                                             />
-                                            <FaUser className="absolute left-3 top-2.5 text-gray-400 text-xs" />
                                         </div>
                                     </div>
 
-                                    {/* Status Filter */}
-                                    <div className="flex-1 min-w-[180px]">
-                                        <CustomDropdown
-                                            label="Status"
-                                            options={[
-                                                { value: "", label: "All Statuses" },
-                                                { value: "Pending", label: "Pending", icon: FaExclamationCircle },
-                                                { value: "Approved", label: "Approved", icon: FaCheckCircle },
-                                                { value: "Rejected", label: "Rejected", icon: FaTimes }
-                                            ]}
-                                            value={leaveHistoryFilters.status}
-                                            onChange={(val) => setLeaveHistoryFilters({ ...leaveHistoryFilters, status: val })}
-                                            placeholder="All Statuses"
-                                        />
-                                    </div>
-
-                                    {/* From Date */}
-                                    <div className="flex-1 min-w-[150px]">
-                                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Applied From</label>
-                                        <div className="relative">
-                                            <input
-                                                type="date"
-                                                value={leaveHistoryFilters.fromDate}
-                                                onChange={(e) => setLeaveHistoryFilters({ ...leaveHistoryFilters, fromDate: e.target.value })}
-                                                className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white text-gray-700 font-medium"
-                                            />
-                                            <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
-                                        </div>
-                                    </div>
-
-                                    {/* To Date */}
-                                    <div className="flex-1 min-w-[150px]">
-                                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Applied To</label>
-                                        <div className="relative">
-                                            <input
-                                                type="date"
-                                                value={leaveHistoryFilters.toDate}
-                                                onChange={(e) => setLeaveHistoryFilters({ ...leaveHistoryFilters, toDate: e.target.value })}
-                                                className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-white text-gray-700 font-medium"
-                                            />
-                                            <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
-                                        </div>
-                                    </div>
-
-                                    {/* Reset Button */}
-                                    <div className="min-w-[120px]">
+                                    {/* Action Buttons */}
+                                    <div className="flex justify-end gap-3 w-full">
                                         <button
-                                            onClick={() => setLeaveHistoryFilters({ name: "", fromDate: "", toDate: "", status: "" })}
-                                            className="w-full bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 px-4 py-2 rounded-lg text-sm font-bold transition-all shadow-sm active:scale-95 h-[38px]"
+                                            onClick={() => {
+                                                const emptyFilters = { name: "", employeeId: "", fromDate: "", toDate: "", status: "" };
+                                                setLeaveHistoryFilters(emptyFilters);
+                                                setAppliedLeaveHistoryFilters(emptyFilters);
+                                            }}
+                                            className="h-[40px] px-5 bg-red-50 hover:bg-red-100 text-red-500 rounded-md text-base font-bold transition-all shadow-sm active:scale-95 flex items-center justify-center shrink-0"
+                                            title="Reset Filters"
                                         >
-                                            Reset Filters
+                                            <FaRedo />
+                                        </button>
+                                        <button
+                                            onClick={() => setAppliedLeaveHistoryFilters(leaveHistoryFilters)}
+                                            className="h-[40px] px-8 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-sm font-bold transition-all shadow-sm active:scale-95 flex items-center justify-center gap-2"
+                                            title="Fetch Data"
+                                        >
+                                            <FaSearch className="w-4 h-4 font-bold" />
+                                            Fetch Data
                                         </button>
                                     </div>
                                 </div>
 
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left border-collapse">
+                                <div className="w-full overflow-x-auto custom-scrollbar">
+                                    <table className="w-full text-left border-collapse min-w-[700px]">
                                         <thead className="bg-gray-50 text-gray-700 text-sm uppercase tracking-wider">
                                             <tr>
                                                 <th className="p-4 font-bold border-b w-[5%] text-center">S.No</th>
@@ -1558,7 +2028,7 @@ const Dashboard = () => {
                                             value={rejectionReason}
                                             onChange={(e) => setRejectionReason(e.target.value)}
                                             placeholder="Enter rejection reason..."
-                                            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all bg-gray-50 min-h-[100px] resize-none text-sm"
+                                            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all bg-gray-50 min-h-[100px] resize-none text-sm placeholder:text-gray-400"
                                             autoFocus
                                         />
                                     </div>

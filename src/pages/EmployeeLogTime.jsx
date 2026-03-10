@@ -2,20 +2,21 @@ import React, { useState, useEffect } from "react";
 import Sidebar from "../components/Sidebar";
 import LogDetailsModal from "../components/LogDetailsModal";
 import CustomDropdown from "../components/CustomDropdown";
-import { FaEllipsisV, FaCalendarAlt, FaProjectDiagram, FaUser, FaUserTag, FaTasks, FaTimes, FaRedo } from "react-icons/fa";
+import { FaEllipsisV, FaCalendarAlt, FaProjectDiagram, FaUser, FaUserTag, FaTasks, FaTimes, FaRedo, FaSearch, FaSpinner } from "react-icons/fa";
 import { API_URL } from '../utils/config';
 import DownloadDropdown from "../components/DownloadDropdown";
 
 const EmployeeLogTime = () => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [logs, setLogs] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
+    const [hasFetched, setHasFetched] = useState(false);
     const [error, setError] = useState(null);
     const [selectedLog, setSelectedLog] = useState(null);
     const [employees, setEmployees] = useState([]); // Store all employees for lookup
     const [projects, setProjects] = useState([]); // Store all projects
 
-    // Filter State
+    const todayStr = new Date().toISOString().split('T')[0];
     const [filters, setFilters] = useState({
         fromDate: "",
         toDate: "",
@@ -25,7 +26,17 @@ const EmployeeLogTime = () => {
         status: ""
     });
 
+    const [appliedFilters, setAppliedFilters] = useState({
+        fromDate: todayStr,
+        toDate: todayStr,
+        project: "",
+        employeeId: "",
+        role: "",
+        status: ""
+    });
+
     useEffect(() => {
+        setHasFetched(true);
         fetchLogs();
         fetchEmployees();
         fetchFilterOptions();
@@ -153,11 +164,11 @@ const EmployeeLogTime = () => {
 
     const calculateDurationStr = (start, end) => {
         if (!start || !end) return "";
-        const [startHours, startMins] = start.split(':').map(Number);
-        const [endHours, endMins] = end.split(':').map(Number);
+        const [startHours, startMins, startSecs = 0] = start.split(':').map(Number);
+        const [endHours, endMins, endSecs = 0] = end.split(':').map(Number);
 
-        const startDate = new Date(0, 0, 0, startHours, startMins, 0);
-        const endDate = new Date(0, 0, 0, endHours, endMins, 0);
+        const startDate = new Date(0, 0, 0, startHours, startMins, startSecs);
+        const endDate = new Date(0, 0, 0, endHours, endMins, endSecs);
 
         let diff = endDate.getTime() - startDate.getTime();
 
@@ -165,14 +176,18 @@ const EmployeeLogTime = () => {
             diff += 24 * 60 * 60 * 1000;
         }
 
-        const hours = Math.floor(diff / 1000 / 60 / 60);
-        const minutes = Math.floor((diff / 1000 / 60 / 60 - hours) * 60);
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        diff -= hours * 1000 * 60 * 60;
+        const minutes = Math.floor(diff / (1000 * 60));
+        diff -= minutes * 1000 * 60;
+        const seconds = Math.floor(diff / 1000);
 
         let durationString = "";
         if (hours > 0) durationString += `${hours} hr${hours > 1 ? 's' : ''} `;
-        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''}`;
+        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''} `;
+        if (seconds > 0) durationString += `${seconds} sec${seconds > 1 ? 's' : ''}`;
 
-        return durationString.trim() || "0 min";
+        return durationString.trim() || "0 sec";
     };
 
     const parseDurationToMinutes = (durationStr) => {
@@ -188,18 +203,22 @@ const EmployeeLogTime = () => {
         const parts = durationStr.split(' ');
         for (let i = 0; i < parts.length; i++) {
             if (parts[i].includes('hr')) {
-                minutes += parseInt(parts[i - 1]) * 60;
+                minutes += parseInt(parts[i - 1], 10) * 60;
             } else if (parts[i].includes('min')) {
-                minutes += parseInt(parts[i - 1]);
+                minutes += parseInt(parts[i - 1], 10);
+            } else if (parts[i].includes('sec')) {
+                minutes += parseInt(parts[i - 1], 10) / 60;
             }
         }
         return minutes;
     };
 
     const formatTotalDuration = (totalMinutes) => {
-        const hours = Math.floor(totalMinutes / 60);
-        const minutes = totalMinutes % 60;
-        return `${hours} Hrs ${minutes} Mins`;
+        const totalSeconds = Math.round(totalMinutes * 60);
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        return `${hours} Hrs ${minutes} Mins ${seconds} Sec.`;
     };
 
     const getGroupTitle = (dateStr) => {
@@ -237,21 +256,42 @@ const EmployeeLogTime = () => {
 
         // Filter logs first
         const filteredLogs = logs.filter(log => {
-            if (filters.fromDate && log.date < filters.fromDate) return false;
-            if (filters.toDate && log.date > filters.toDate) return false;
-            if (filters.project && log.projectName !== filters.project) return false;
+            if (appliedFilters.fromDate || appliedFilters.toDate) {
+                const logDateStr = log.date || log.Date;
+                if (!logDateStr) return false;
+                const d = new Date(logDateStr);
+                d.setHours(0, 0, 0, 0);
 
-            if (filters.employeeId) {
-                const matchesId = log.employeeId?._id === filters.employeeId;
-                // Case-insensitive name match for CSV logs
-                const filterName = uniqueEmployeesMap.get(filters.employeeId);
+                if (appliedFilters.fromDate) {
+                    if (logDateStr < appliedFilters.fromDate) return false;
+                }
+
+                if (appliedFilters.toDate) {
+                    if (logDateStr > appliedFilters.toDate) return false;
+                }
+            }
+
+            if (appliedFilters.project && log.projectName !== appliedFilters.project) return false;
+
+            if (appliedFilters.employeeId) {
+                // appliedFilters.employeeId is the _id from the employees array
+                const filterId = appliedFilters.employeeId;
+
+                // 1. Check if log.employeeId matches (could be string or populated object)
+                const logEmpId = typeof log.employeeId === 'object' && log.employeeId !== null
+                    ? log.employeeId._id
+                    : log.employeeId;
+                const matchesId = logEmpId === filterId;
+
+                // 2. Check if log.taskOwner (name) matches the name for this ID (support CSV logs without proper ref)
+                const filterName = uniqueEmployeesMap.get(filterId);
                 const matchesName = filterName && log.taskOwner && log.taskOwner.toLowerCase().trim() === filterName.toLowerCase().trim();
 
                 if (!matchesId && !matchesName) return false;
             }
 
-            if (filters.role && log.employeeId?.role !== filters.role) return false;
-            if (filters.status && (log.status || "In Progress") !== filters.status) return false;
+            if (appliedFilters.role && log.employeeId?.role !== appliedFilters.role) return false;
+            if (appliedFilters.status && (log.status || "In Progress") !== appliedFilters.status) return false;
             return true;
         });
 
@@ -300,7 +340,7 @@ const EmployeeLogTime = () => {
         { header: "Task Type", accessor: "taskType" },
         { header: "Description", accessor: "description" },
         { header: "Time", accessor: (item) => `${formatTime(item.startTime)} - ${formatTime(item.endTime)}` },
-        { header: "Duration", accessor: (item) => item.timeAutomation || item.duration || calculateDurationStr(item.startTime, item.endTime) },
+        { header: "Duration", accessor: (item) => item.duration || item.timeAutomation || calculateDurationStr(item.startTime, item.endTime) },
         { header: "Status", accessor: (item) => item.status || "In Progress" },
         { header: "Log Type", accessor: (item) => item.logType || "Main Task" }
     ];
@@ -310,7 +350,7 @@ const EmployeeLogTime = () => {
     };
 
     return (
-        <div className="flex min-h-screen bg-gray-100 font-sans relative">
+        <div className="flex h-screen overflow-hidden bg-gray-100 font-sans relative">
             <Sidebar className="hidden md:flex" />
 
             {isSidebarOpen && (
@@ -336,103 +376,128 @@ const EmployeeLogTime = () => {
                 </header>
 
                 <main className="flex-1 p-6 overflow-y-auto">
-                    <div className="flex justify-between items-center mb-6">
-                        <h2 className="text-2xl font-bold text-gray-800">Employee Work Logs & QT</h2>
-                        <div className="flex gap-2">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                        <h2 className="text-xl sm:text-2xl font-bold text-gray-800">Employee Work Logs & QT</h2>
+                        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                             <DownloadDropdown
                                 data={filteredLogs}
                                 fileName="Employee_Work_Logs"
                                 columns={downloadColumns}
                             />
-                            <button
-                                onClick={() => fetchLogs()}
-                                className="bg-indigo-50 text-indigo-600 px-3 py-1 rounded text-sm hover:bg-indigo-100 transition"
-                            >
-                                Refresh
-                            </button>
                         </div>
                     </div>
 
                     {/* Filter Navbar */}
-                    <div className="bg-white rounded-xl shadow-sm p-4 mb-6 flex flex-wrap items-end gap-4 border border-gray-100">
-                        <div className="flex-1 min-w-[150px]">
-                            <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">From Date</label>
-                            <div className="relative">
-                                <input
-                                    type="date"
-                                    value={filters.fromDate}
-                                    onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })}
-                                    className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 hover:bg-white text-gray-700 font-medium"
-                                />
-                                <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                    <div className="bg-white rounded-2xl shadow-sm p-6 mb-8 border border-gray-100 flex flex-col gap-6">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-5">
+                            <div className="w-full">
+                                <label className="text-[10px] font-extrabold text-gray-500 uppercase mb-1.5 block tracking-wider">From Date</label>
+                                <div className="relative">
+                                    <input
+                                        type="date"
+                                        value={filters.fromDate}
+                                        onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })}
+                                        className="w-full px-3 py-2 pl-9 rounded-xl border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 hover:bg-white text-gray-700 font-medium h-[42px]"
+                                    />
+                                    <FaCalendarAlt className="absolute left-3 top-3 text-gray-400 text-sm" />
+                                </div>
+                            </div>
+
+                            <div className="w-full">
+                                <label className="text-[10px] font-extrabold text-gray-500 uppercase mb-1.5 block tracking-wider">To Date</label>
+                                <div className="relative">
+                                    <input
+                                        type="date"
+                                        value={filters.toDate}
+                                        onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
+                                        className="w-full px-3 py-2 pl-9 rounded-xl border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 hover:bg-white text-gray-700 font-medium h-[42px]"
+                                    />
+                                    <FaCalendarAlt className="absolute left-3 top-3 text-gray-400 text-sm" />
+                                </div>
+                            </div>
+
+                            <div className="w-full">
+                                <label className="text-[10px] font-extrabold text-gray-500 uppercase mb-1.5 block tracking-wider">Project</label>
+                                <div className="[&>div>div:first-child]:h-[42px] [&>div>div:first-child]:rounded-xl [&>div>div:first-child]:border-gray-200 [&>div>div:first-child]:bg-gray-50 hover:[&>div>div:first-child]:bg-white transition-all [&>div>div:first-child]:shadow-none">
+                                    <CustomDropdown
+                                        options={[{ value: "", label: "All Projects" }, ...projects.map(p => ({ value: p, label: p, icon: FaProjectDiagram }))]}
+                                        value={filters.project}
+                                        onChange={(val) => setFilters({ ...filters, project: val })}
+                                        placeholder="All Projects"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="w-full">
+                                <label className="text-[10px] font-extrabold text-gray-500 uppercase mb-1.5 block tracking-wider">Employee</label>
+                                <div className="[&>div>div:first-child]:h-[42px] [&>div>div:first-child]:rounded-xl [&>div>div:first-child]:border-gray-200 [&>div>div:first-child]:bg-gray-50 hover:[&>div>div:first-child]:bg-white transition-all [&>div>div:first-child]:shadow-none">
+                                    <CustomDropdown
+                                        options={[{ value: "", label: "All Employees" }, ...uniqueEmployees.map(e => ({ value: e.value, label: e.label, icon: FaUser }))]}
+                                        value={filters.employeeId}
+                                        onChange={(val) => setFilters({ ...filters, employeeId: val })}
+                                        placeholder="All Employees"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="w-full">
+                                <label className="text-[10px] font-extrabold text-gray-500 uppercase mb-1.5 block tracking-wider">Role</label>
+                                <div className="[&>div>div:first-child]:h-[42px] [&>div>div:first-child]:rounded-xl [&>div>div:first-child]:border-gray-200 [&>div>div:first-child]:bg-gray-50 hover:[&>div>div:first-child]:bg-white transition-all [&>div>div:first-child]:shadow-none">
+                                    <CustomDropdown
+                                        options={[{ value: "", label: "All Roles" }, ...uniqueRoles.map(r => ({ value: r, label: r, icon: FaUserTag }))]}
+                                        value={filters.role}
+                                        onChange={(val) => setFilters({ ...filters, role: val })}
+                                        placeholder="All Roles"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="w-full">
+                                <label className="text-[10px] font-extrabold text-gray-500 uppercase mb-1.5 block tracking-wider">Status</label>
+                                <div className="[&>div>div:first-child]:h-[42px] [&>div>div:first-child]:rounded-xl [&>div>div:first-child]:border-gray-200 [&>div>div:first-child]:bg-gray-50 hover:[&>div>div:first-child]:bg-white transition-all [&>div>div:first-child]:shadow-none">
+                                    <CustomDropdown
+                                        options={[
+                                            { value: "", label: "All Statuses" },
+                                            { value: "In Progress", label: "In Progress", icon: FaTasks },
+                                            { value: "Hold", label: "Hold", icon: FaTasks },
+                                            { value: "Completed", label: "Completed", icon: FaTasks }
+                                        ]}
+                                        value={filters.status}
+                                        onChange={(val) => setFilters({ ...filters, status: val })}
+                                        placeholder="All Statuses"
+                                    />
+                                </div>
                             </div>
                         </div>
 
-                        <div className="flex-1 min-w-[150px]">
-                            <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">To Date</label>
-                            <div className="relative">
-                                <input
-                                    type="date"
-                                    value={filters.toDate}
-                                    onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
-                                    className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 hover:bg-white text-gray-700 font-medium"
-                                />
-                                <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
-                            </div>
-                        </div>
-
-                        <div className="flex-1 min-w-[180px]">
-                            <CustomDropdown
-                                label="Project"
-                                options={[{ value: "", label: "All Projects" }, ...projects.map(p => ({ value: p, label: p, icon: FaProjectDiagram }))]}
-                                value={filters.project}
-                                onChange={(val) => setFilters({ ...filters, project: val })}
-                                placeholder="All Projects"
-                            />
-                        </div>
-
-                        <div className="flex-1 min-w-[180px]">
-                            <CustomDropdown
-                                label="Employee"
-                                options={[{ value: "", label: "All Employees" }, ...uniqueEmployees.map(e => ({ value: e.value, label: e.label, icon: FaUser }))]}
-                                value={filters.employeeId}
-                                onChange={(val) => setFilters({ ...filters, employeeId: val })}
-                                placeholder="All Employees"
-                            />
-                        </div>
-
-                        <div className="flex-1 min-w-[180px]">
-                            <CustomDropdown
-                                label="Role"
-                                options={[{ value: "", label: "All Roles" }, ...uniqueRoles.map(r => ({ value: r, label: r, icon: FaUserTag }))]}
-                                value={filters.role}
-                                onChange={(val) => setFilters({ ...filters, role: val })}
-                                placeholder="All Roles"
-                            />
-                        </div>
-
-                        <div className="flex-1 min-w-[180px]">
-                            <CustomDropdown
-                                label="Status"
-                                options={[
-                                    { value: "", label: "All Statuses" },
-                                    { value: "In Progress", label: "In Progress", icon: FaTasks },
-                                    { value: "Hold", label: "Hold", icon: FaTasks },
-                                    { value: "Completed", label: "Completed", icon: FaTasks }
-                                ]}
-                                value={filters.status}
-                                onChange={(val) => setFilters({ ...filters, status: val })}
-                                placeholder="All Statuses"
-                            />
-                        </div>
-
-                        <div className="flex-none pb-[1px]">
+                        <div className="flex justify-end items-center gap-3 pt-4 border-t border-gray-100">
                             <button
-                                onClick={() => setFilters({ fromDate: "", toDate: "", project: "", employeeId: "", role: "", status: "" })}
-                                className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 p-3 rounded-full transition-all shadow-sm active:scale-95 flex items-center justify-center transform hover:rotate-180 duration-500"
+                                onClick={() => {
+                                    setFilters({ fromDate: "", toDate: "", project: "", employeeId: "", role: "", status: "" });
+                                    const todayStr = new Date().toISOString().split('T')[0];
+                                    setAppliedFilters({ fromDate: todayStr, toDate: todayStr, project: "", employeeId: "", role: "", status: "" });
+                                }}
+                                className="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 px-5 py-2.5 rounded-xl transition-all shadow-sm active:scale-95 flex items-center justify-center font-bold text-sm gap-2"
                                 title="Reset Filters"
                             >
                                 <FaRedo className="text-sm" />
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setAppliedFilters({ ...filters });
+                                    // Make sure we have logs initially; if not fetch them, but usually they are already fetched.
+                                    // You can optionally call fetchLogs() here if you want to ensure freshest data.
+                                    fetchLogs();
+                                }}
+                                disabled={loading}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-2.5 rounded-xl transition-all shadow-sm active:scale-95 flex items-center justify-center font-bold text-sm gap-2 disabled:opacity-75 disabled:cursor-not-allowed"
+                            >
+                                {loading ? (
+                                    <FaSpinner className="animate-spin text-sm" />
+                                ) : (
+                                    <FaSearch className="text-sm" />
+                                )}
+                                {loading ? "Fetching..." : "Fetch Data"}
                             </button>
                         </div>
                     </div>
@@ -440,21 +505,47 @@ const EmployeeLogTime = () => {
                     {/* Grouped Logs Table */}
                     <div className="space-y-8 pb-32">
                         {loading ? (
-                            <div className="text-center py-10 text-gray-500">Loading logs...</div>
+                            <div className="flex flex-col items-center justify-center py-20">
+                                <FaSpinner className="animate-spin text-indigo-600 text-5xl mb-4" />
+                                <p className="text-gray-500 font-medium">Fetching Data...</p>
+                            </div>
+                        ) : !hasFetched ? (
+                            <div className="text-center py-20 bg-white rounded-xl shadow-sm border border-gray-100">
+                                <p className="text-gray-500 font-medium text-lg">Please select filters and click "Fetch Data" to view logs.</p>
+                            </div>
                         ) : error ? (
-                            <div className="text-center py-10 text-red-500">{error}</div>
+                            <div className="text-center py-10 text-rose-500 font-medium">{error}</div>
                         ) : sortedDates.length === 0 ? (
-                            <div className="text-center py-10 text-gray-500">No logs found.</div>
+                            <div className="text-center py-20 bg-white rounded-xl shadow-sm border border-gray-100">
+                                <p className="text-gray-500 font-medium text-lg">No logs found based on the selected filters.</p>
+                            </div>
                         ) : (
                             sortedDates.map(date => {
                                 const groupLogs = grouped[date];
-                                const groupTotalMinutes = groupLogs.reduce((acc, log) => {
-                                    const durationStr = log.timeAutomation || log.duration || calculateDurationStr(log.startTime, log.endTime);
-                                    return acc + parseDurationToMinutes(durationStr);
-                                }, 0);
+                                const groupMetrics = groupLogs.reduce((acc, log) => {
+                                    const durationStr = log.duration || log.timeAutomation || calculateDurationStr(log.startTime, log.endTime);
+                                    const mins = parseDurationToMinutes(durationStr);
 
-                                // Calculate unique task owners
-                                const uniqueOwners = new Set(groupLogs.map(log => log.taskOwner || log.employeeId?.name || "Unknown")).size;
+                                    acc.total += mins;
+
+                                    if (log.logType === 'Meeting') {
+                                        acc.meeting += mins;
+                                    } else if (["QT Task", "QT", "Quick"].includes(log.logType)) {
+                                        acc.qt += mins;
+                                    } else {
+                                        acc.main += mins;
+                                    }
+
+                                    return acc;
+                                }, { total: 0, meeting: 0, qt: 0, main: 0 });
+
+                                // Calculate unique task owners by ID
+                                const uniqueOwners = new Set(groupLogs.map(log => {
+                                    if (log.employeeId && log.employeeId._id) return log.employeeId._id.toString();
+                                    if (log.employeeId && typeof log.employeeId === 'string') return log.employeeId;
+                                    // Fallback to name if ID is missing
+                                    return log.taskOwner || "Unknown";
+                                })).size;
 
                                 return (
                                     <div key={date} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -463,18 +554,30 @@ const EmployeeLogTime = () => {
                                                 <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide">
                                                     {getGroupTitle(date)}
                                                 </h3>
-                                                <span className="text-xs text-gray-400 font-medium">({groupLogs.length} tasks)</span>
+                                                <span className="text-xs text-gray-400 font-medium">({groupLogs.length} tasks / {uniqueOwners} Emp)</span>
                                             </div>
-                                            <div className="bg-indigo-50 px-3 py-1 rounded text-xs">
-                                                <span className="text-indigo-500 font-semibold mr-1">Log Hrs:</span>
-                                                <span className="text-indigo-700 font-bold">
-                                                    {formatTotalDuration(groupTotalMinutes)} / {uniqueOwners} Employees
-                                                </span>
+                                            <div className="flex flex-wrap gap-2 md:gap-3">
+                                                <div className="bg-purple-50 px-3 py-1 rounded text-xs border border-purple-100 shadow-sm">
+                                                    <span className="text-purple-500 font-semibold mr-1">QT Hrs:</span>
+                                                    <span className="text-purple-700 font-bold">{formatTotalDuration(groupMetrics.qt)}</span>
+                                                </div>
+                                                <div className="bg-teal-50 px-3 py-1 rounded text-xs border border-teal-100 shadow-sm">
+                                                    <span className="text-teal-500 font-semibold mr-1">Meeting Hrs:</span>
+                                                    <span className="text-teal-700 font-bold">{formatTotalDuration(groupMetrics.meeting)}</span>
+                                                </div>
+                                                <div className="bg-blue-50 px-3 py-1 rounded text-xs border border-blue-100 shadow-sm">
+                                                    <span className="text-blue-500 font-semibold mr-1">Main Task Hrs:</span>
+                                                    <span className="text-blue-700 font-bold">{formatTotalDuration(groupMetrics.main)}</span>
+                                                </div>
+                                                <div className="bg-indigo-50 px-3 py-1 rounded text-xs border border-indigo-100 shadow-sm">
+                                                    <span className="text-indigo-500 font-semibold mr-1">Total Hrs:</span>
+                                                    <span className="text-indigo-700 font-bold">{formatTotalDuration(groupMetrics.total)} / {uniqueOwners} {uniqueOwners === 1 ? 'Emp' : 'Emps'}</span>
+                                                </div>
                                             </div>
                                         </div>
 
-                                        <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-200">
-                                            <table className="w-full text-left border-collapse min-w-[1000px] table-fixed">
+                                        <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-gray-200">
+                                            <table className="w-full text-left border-collapse min-w-[1000px] xl:min-w-full table-fixed">
                                                 <thead>
                                                     <tr className="bg-white text-gray-500 text-xs border-b border-gray-100 uppercase tracking-wider">
                                                         <th className="p-4 font-semibold w-5 text-center text-gray-400">S.No</th>
@@ -488,7 +591,7 @@ const EmployeeLogTime = () => {
                                                 </thead>
                                                 <tbody className="divide-y divide-gray-50">
                                                     {groupLogs.map((log, index) => {
-                                                        const displayDuration = log.timeAutomation || log.duration || calculateDurationStr(log.startTime, log.endTime);
+                                                        const displayDuration = log.duration || log.timeAutomation || calculateDurationStr(log.startTime, log.endTime);
                                                         const displayTaskNo = (log.taskNo || "0").toString().padStart(2, '0');
 
                                                         // Determine User Role
@@ -505,7 +608,13 @@ const EmployeeLogTime = () => {
                                                                 onClick={() => handleActionClick(log, index)}
                                                             >
                                                                 <td className="p-4 text-xs font-bold text-gray-400 text-center">
-                                                                    {index + 1}
+                                                                    <div className="flex flex-col justify-center items-center gap-1.5 mt-1">
+                                                                        <span>{groupLogs.length - index}</span>
+                                                                        <span
+                                                                            className={`w-2 h-2 shrink-0 rounded-[2px] ${log.isPendingOffline || log.logType === 'Offline Task' ? 'bg-red-500' : 'bg-green-500'}`}
+                                                                            title={log.isPendingOffline ? 'Offline Task Pending' : log.logType === 'Offline Task' ? 'Offline Task' : 'Online Task'}
+                                                                        ></span>
+                                                                    </div>
                                                                 </td>
 
                                                                 {/* Task Owner */}
@@ -540,9 +649,6 @@ const EmployeeLogTime = () => {
                                                                 {/* Description */}
                                                                 <td className="p-4">
                                                                     <div className="flex flex-col gap-1">
-                                                                        <span className={`self-start text-[10px] font-bold px-2 py-0.5 rounded shadow-sm ${log.logType === 'Offline Task' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-blue-50 text-blue-600 border border-blue-100'}`}>
-                                                                            {log.logType === 'Offline Task' ? 'Offline Task' : 'Online Task'}
-                                                                        </span>
                                                                         <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed" title={log.description}>
                                                                             {log.description}
                                                                         </p>
@@ -565,11 +671,11 @@ const EmployeeLogTime = () => {
 
                                                                 {/* Log Type */}
                                                                 <td className="p-4 text-center">
-                                                                    <span className={`inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${["QT Task", "QT", "Quick"].includes(log.logType)
+                                                                    <span className={`inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${log.logType === 'Meeting' ? 'bg-teal-50 text-teal-700 border-teal-100' : ["QT Task", "QT", "Quick"].includes(log.logType)
                                                                         ? "bg-purple-50 text-purple-700 border-purple-100"
                                                                         : "bg-blue-50 text-blue-700 border-blue-100"
                                                                         }`}>
-                                                                        {["QT Task", "QT", "Quick"].includes(log.logType) ? "Quick" : "Main"}
+                                                                        {log.logType === 'Meeting' ? 'Meeting' : ["QT Task", "QT", "Quick"].includes(log.logType) ? "Quick" : "Main"}
                                                                     </span>
                                                                 </td>
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { API_URL } from '../../config'; // Adjust path if needed, check imports in ChatArea
+import { API_URL } from '../../utils/config';
 import TaskDetailsModal from '../TaskDetailsModal'; // Adjust path
 import { AlertCircle } from 'lucide-react';
 
@@ -19,10 +19,9 @@ export default function TaskDetailsPopup({ taskId, onClose }) {
         try {
             setLoading(true);
             const token = localStorage.getItem('token');
-            // Assuming API_URL is correct, ChatArea uses import { API_URL } from '../../config';
-            // TaskDetailsSidebar used import { API_URL } from '../../config';
+            // API_URL is imported from ../../utils/config
             // So ../../config should be correct if this file is in src/components/chat/
-            const res = await axios.get(`${API_URL}/api/tasks/${taskId}`, {
+            const res = await axios.get(`${API_URL}/tasks/${taskId}`, {
                 headers: { 'x-auth-token': token }
             });
             setTask(res.data);

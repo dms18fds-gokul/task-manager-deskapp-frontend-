@@ -133,7 +133,7 @@ const ApplyLeave = () => {
     ];
 
     return (
-        <div className="flex min-h-screen bg-gray-100 font-sans relative">
+        <div className="flex h-screen overflow-hidden bg-gray-100 font-sans relative">
             {/* Desktop Sidebar */}
             <EmployeeSidebar className="hidden md:flex" />
 
@@ -156,8 +156,8 @@ const ApplyLeave = () => {
                     </button>
                 </header>
 
-                <main className="flex-1 p-8 overflow-y-auto">
-                    <div className="max-w-4xl mx-auto space-y-8">
+                <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+                    <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8">
 
                         {/* Apply Leave Section */}
                         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -198,7 +198,7 @@ const ApplyLeave = () => {
                                     </div>
 
                                     {leaveCategory === "Day Leave" ? (
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                                             <div>
                                                 <label className="block text-sm font-semibold text-gray-700 mb-2">Applied Date</label>
                                                 <input
@@ -221,7 +221,7 @@ const ApplyLeave = () => {
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                                             <div>
                                                 <label className="block text-sm font-semibold text-gray-700 mb-2">Applied Date</label>
                                                 <input
@@ -307,8 +307,8 @@ const ApplyLeave = () => {
                                 </span>
                             </div>
 
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse">
+                            <div className="w-full overflow-x-auto custom-scrollbar">
+                                <table className="w-full text-left border-collapse min-w-[800px] xl:min-w-full">
                                     <thead>
                                         <tr className="bg-gray-50/50 border-b border-gray-200 text-gray-500 text-xs font-extrabold uppercase tracking-wider">
                                             <th className="px-6 py-4 w-[5%] text-center">S.No</th>

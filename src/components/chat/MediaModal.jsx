@@ -1,8 +1,10 @@
 import { X, ZoomIn, ZoomOut, Download, FileText, Music, Video, ExternalLink } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
+import DownloadRequestModal from './DownloadRequestModal';
 
-export default function MediaModal({ src, type = 'image', fileName = 'Media', onClose }) {
+export default function MediaModal({ src, type = 'image', fileName = 'Media', onClose, channelId }) {
     const [scale, setScale] = useState(1);
+    const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
     const videoRef = useRef(null);
     const audioRef = useRef(null);
 
@@ -27,6 +29,11 @@ export default function MediaModal({ src, type = 'image', fileName = 'Media', on
     const isVideo = type.startsWith('video/') || src.match(/\.(mp4|webm|mov|mkv)$/i);
     const isAudio = type.startsWith('audio/') || src.match(/\.(mp3|wav|ogg|m4a)$/i);
     const isPDF = type === 'application/pdf' || src.match(/\.pdf$/i);
+
+    const handleDownloadClick = (e) => {
+        e.stopPropagation();
+        setIsDownloadModalOpen(true);
+    };
 
     const renderContent = () => {
         if (isImage) {
@@ -86,66 +93,75 @@ export default function MediaModal({ src, type = 'image', fileName = 'Media', on
                 <FileText size={64} className="text-gray-400" />
                 <h3 className="text-lg font-medium text-center break-all">{fileName}</h3>
                 <p className="text-sm text-gray-400">Preview not available</p>
-                <a
-                    href={src}
-                    download={fileName}
+                <button
+                    onClick={handleDownloadClick}
                     className="mt-2 px-6 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg flex items-center gap-2 transition-colors"
                 >
-                    <Download size={18} /> Download File
-                </a>
+                    <Download size={18} /> Request Download
+                </button>
             </div>
         );
     };
 
     return (
-        <div
-            className="fixed inset-0 z-[200] flex items-center justify-center bg-black/95 backdrop-blur-md animate-fade-in p-4 md:p-8"
-            onClick={onClose}
-        >
-            {/* Toolbar */}
-            <div className="absolute top-4 right-4 flex items-center gap-2 z-[210]">
-                <a
-                    href={src}
-                    download={fileName}
-                    onClick={(e) => e.stopPropagation()}
-                    className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
-                    title="Download"
-                >
-                    <Download size={20} />
-                </a>
+        <>
+            <div
+                className="fixed inset-0 z-[200] flex items-center justify-center bg-black/95 backdrop-blur-md animate-fade-in p-4 md:p-8"
+                onClick={onClose}
+            >
+                {/* Toolbar */}
+                <div className="absolute top-4 right-4 flex items-center gap-2 z-[210]">
+                    <button
+                        onClick={handleDownloadClick}
+                        className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+                        title="Request Download"
+                    >
+                        <Download size={20} />
+                    </button>
 
-                {isImage && (
-                    <>
-                        <button
-                            onClick={handleZoomOut}
-                            className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
-                            title="Zoom Out"
-                        >
-                            <ZoomOut size={20} />
-                        </button>
-                        <button
-                            onClick={handleZoomIn}
-                            className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
-                            title="Zoom In"
-                        >
-                            <ZoomIn size={20} />
-                        </button>
-                    </>
-                )}
+                    {isImage && (
+                        <>
+                            <button
+                                onClick={handleZoomOut}
+                                className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+                                title="Zoom Out"
+                            >
+                                <ZoomOut size={20} />
+                            </button>
+                            <button
+                                onClick={handleZoomIn}
+                                className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+                                title="Zoom In"
+                            >
+                                <ZoomIn size={20} />
+                            </button>
+                        </>
+                    )}
 
-                <button
-                    onClick={onClose}
-                    className="p-2 rounded-full bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white transition-colors"
-                    title="Close"
-                >
-                    <X size={20} />
-                </button>
+                    <button
+                        onClick={onClose}
+                        className="p-2 rounded-full bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white transition-colors"
+                        title="Close"
+                    >
+                        <X size={20} />
+                    </button>
+                </div>
+
+                {/* Content Container */}
+                <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+                    {renderContent()}
+                </div>
             </div>
 
-            {/* Content Container */}
-            <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
-                {renderContent()}
-            </div>
-        </div>
+            {isDownloadModalOpen && (
+                <DownloadRequestModal
+                    fileUrl={src}
+                    fileName={fileName}
+                    fileType={type}
+                    channelId={channelId}
+                    onClose={() => setIsDownloadModalOpen(false)}
+                />
+            )}
+        </>
     );
 }

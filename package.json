@@ -13,6 +13,7 @@
     "@capacitor/core": "^8.1.0",
     "@capacitor/device": "^8.0.1",
     "axios": "^1.13.5",
+    "date-fns": "^4.1.0",
     "emoji-picker-react": "^4.18.0",
     "jspdf": "^4.2.0",
     "jspdf-autotable": "^5.0.7",
@@ -22,6 +23,7 @@
     "react-icons": "^5.5.0",
     "react-router-dom": "^7.13.0",
     "socket.io-client": "^4.8.3",
+    "uuid": "^13.0.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

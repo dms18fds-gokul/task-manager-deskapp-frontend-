@@ -1,17 +1,33 @@
 import React, { useState } from 'react';
 import { API_URL, getSocketUrl } from "../utils/config";
-import { FaTimes, FaFileAlt, FaMicrophone, FaDownload, FaHistory, FaInfoCircle } from 'react-icons/fa';
+import { FaCalendarAlt, FaFileAlt, FaMicrophone, FaDownload, FaHistory, FaInfoCircle } from 'react-icons/fa';
 
 const TaskDetailsModal = ({ task, onClose, isAdmin = false }) => {
     const [activeTab, setActiveTab] = useState('details');
 
     if (!task) return null;
 
-    // Helper to format time to "hh:mm AM/PM"
+    // Helper to format time to "hh:mm AM/PM" from Date string
     const formatTime = (dateString) => {
         if (!dateString) return "-";
         const date = new Date(dateString);
         return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    };
+
+    // Helper to format HH:mm or HH:mm:ss string to 12-hour AM/PM format
+    const formatTo12Hour = (timeStr) => {
+        if (!timeStr) return "";
+        const [hoursStr, minutesStr] = timeStr.split(':');
+        const hours = parseInt(hoursStr, 10);
+        const minutes = parseInt(minutesStr, 10) || 0;
+
+        if (isNaN(hours) || isNaN(minutes)) return timeStr;
+
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        const formattedHours = hours % 12 || 12; // Convert 0 to 12
+        const formattedMinutes = minutes.toString().padStart(2, '0');
+
+        return `${formattedHours}:${formattedMinutes} ${ampm}`;
     };
 
     // Helper to format date "DD-MM-YYYY"
@@ -69,19 +85,48 @@ const TaskDetailsModal = ({ task, onClose, isAdmin = false }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-fade-in flex flex-col max-h-[90vh]">
                 {/* Header */}
-                <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 flex justify-between items-start">
-                    <div>
-                        <div className="flex items-center gap-2 mb-1">
-                            <span className="text-xs font-bold text-indigo-600 uppercase tracking-wide bg-indigo-50 px-2 py-1 rounded">
-                                {task.workCategory}
+                <div className="bg-gray-50/50 px-6 py-5 border-b border-gray-100 flex flex-col gap-3">
+                    {/* First Row: Priority & Task Type | Start Date, Time & Deadline */}
+                    <div className="flex justify-between items-center w-full">
+                        {/* Left Side: Priority & Type */}
+                        <div className="flex items-center gap-3">
+                            <span className={`px-2.5 py-1 rounded text-[11px] font-bold uppercase tracking-wide ${task.priority === "High" ? "bg-rose-50 text-rose-600 border border-rose-200" :
+                                task.priority === "Medium" ? "bg-amber-50 text-amber-600 border border-amber-200" :
+                                    "bg-emerald-50 text-emerald-600 border border-emerald-200"
+                                }`}>
+                                {task.priority ? task.priority.toUpperCase() : "NORMAL"}
                             </span>
+
+                            {task.taskType && (
+                                <span className="px-2.5 py-1 rounded text-[11px] font-bold uppercase tracking-wide bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                    {task.taskType}
+                                </span>
+                            )}
                         </div>
-                        <h2 className="text-xl font-bold text-gray-800 mt-1">{task.taskTitle}</h2>
-                        <p className="text-sm text-gray-500 font-medium">{task.projectName}</p>
+
+                        {/* Right Side: Date/Time */}
+                        <div className="text-sm font-semibold text-gray-500 flex items-center gap-2">
+                            <FaCalendarAlt className="text-gray-400 mr-0.5" />
+                            <span>{task.startDate}</span>
+                            <span className="text-gray-300 font-light">|</span>
+                            <span>{formatTo12Hour(task.startTime)}</span>
+
+                            {task.deadline && (
+                                <>
+                                    <span className="text-gray-300 font-light">|</span>
+                                    <span className="text-rose-600 font-bold">Due: <span className="font-medium ml-1">{task.deadline}</span></span>
+                                </>
+                            )}
+                        </div>
                     </div>
-                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition p-2 rounded-full hover:bg-gray-200">
-                        <FaTimes size={20} />
-                    </button>
+
+                    {/* Second Line: Project Title */}
+                    <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wide mt-1">
+                        {task.projectName}
+                    </h3>
+
+                    {/* Third Line: Task Title */}
+                    <h2 className="text-2xl font-bold text-slate-800 tracking-tight mt-[-4px]">{task.taskTitle}</h2>
                 </div>
 
                 {/* Tabs */}
@@ -116,25 +161,6 @@ const TaskDetailsModal = ({ task, onClose, isAdmin = false }) => {
                                 <p className="text-gray-600 text-sm leading-relaxed bg-gray-50 p-3 rounded-lg border border-gray-100">
                                     {task.description}
                                 </p>
-                            </div>
-
-                            {/* Meta Data Grid */}
-                            <div className="grid grid-cols-2 ml-1 gap-6">
-                                <div>
-                                    <h3 className="text-xs font-bold text-gray-500 uppercase mb-1">Priority</h3>
-                                    <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold ${task.priority === "High" ? "bg-rose-100 text-rose-700" :
-                                        task.priority === "Medium" ? "bg-amber-100 text-amber-700" :
-                                            "bg-blue-100 text-blue-700"
-                                        }`}>
-                                        {task.priority}
-                                    </span>
-                                </div>
-                                <div>
-                                    <h3 className="text-xs font-bold text-gray-500 uppercase mb-1">Start Date & Time</h3>
-                                    <p className="text-sm font-semibold text-gray-800">
-                                        {task.startDate} <span className="text-gray-400">|</span> {task.startTime}
-                                    </p>
-                                </div>
                             </div>
 
                             {/* Hierarchy Info */}

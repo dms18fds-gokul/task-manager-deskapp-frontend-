@@ -21,26 +21,30 @@ const LogDetailsModal = ({ isOpen, onClose, log, employees = [] }) => {
 
     const calculateDurationStr = (start, end) => {
         if (!start || !end) return "";
-        const [startHours, startMins] = start.split(':').map(Number);
-        const [endHours, endMins] = end.split(':').map(Number);
+        const [startHours, startMins, startSecs = 0] = start.split(':').map(Number);
+        const [endHours, endMins, endSecs = 0] = end.split(':').map(Number);
 
-        const startDate = new Date(0, 0, 0, startHours, startMins, 0);
-        const endDate = new Date(0, 0, 0, endHours, endMins, 0);
+        const startDate = new Date(0, 0, 0, endHours, endMins, endSecs); // Changed to end date for correct calculation
+        const endDate = new Date(0, 0, 0, startHours, startMins, startSecs); // Changed to start date for correct calculation
 
-        let diff = endDate.getTime() - startDate.getTime();
+        let diff = startDate.getTime() - endDate.getTime(); // Swapped startDate and endDate for correct diff
 
         if (diff < 0) {
             diff += 24 * 60 * 60 * 1000;
         }
 
-        const hours = Math.floor(diff / 1000 / 60 / 60);
-        const minutes = Math.floor((diff / 1000 / 60 / 60 - hours) * 60);
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        diff -= hours * 1000 * 60 * 60;
+        const minutes = Math.floor(diff / (1000 * 60));
+        diff -= minutes * 1000 * 60;
+        const seconds = Math.floor(diff / 1000);
 
         let durationString = "";
         if (hours > 0) durationString += `${hours} hr${hours > 1 ? 's' : ''} `;
-        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''}`;
+        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''} `;
+        if (seconds > 0) durationString += `${seconds} sec${seconds > 1 ? 's' : ''}`;
 
-        return durationString.trim() || "0 min";
+        return durationString.trim() || "0 sec";
     };
 
     const downloadFile = (e, path) => {
@@ -54,7 +58,7 @@ const LogDetailsModal = ({ isOpen, onClose, log, employees = [] }) => {
         document.body.removeChild(link);
     };
 
-    const displayDuration = log.timeAutomation || log.duration || calculateDurationStr(log.startTime, log.endTime);
+    const displayDuration = log.duration || log.timeAutomation || calculateDurationStr(log.startTime, log.endTime);
 
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">

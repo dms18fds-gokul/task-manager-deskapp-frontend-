@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { Hash, Lock, LogOut, Plus, X, MoreVertical, User, Briefcase, CornerDownRight, Trash2, UserPlus, UserMinus, GitBranch, ChevronRight, ChevronDown, Clock, Database, ArrowLeft, Home, Layers, MessageCircle, LayoutGrid, MessagesSquare, Power, CornerUpLeft, Bell } from 'lucide-react';
+import { Hash, Lock, LogOut, Plus, X, MoreVertical, User, Users, Briefcase, CornerDownRight, Trash2, UserPlus, UserMinus, GitBranch, ChevronRight, ChevronDown, Clock, Database, ArrowLeft, Home, Layers, MessageCircle, LayoutGrid, MessagesSquare, Power, CornerUpLeft, Bell } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { IoReturnDownBack } from "react-icons/io5";
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
-import { API_URL } from '../../config';
+import { API_URL } from '../../utils/config';
 
 import ProfileModal from './ProfileModal';
 import MediaHistoryModal from './MediaHistoryModal';
@@ -24,6 +24,9 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [createModalType, setCreateModalType] = useState(null); // 'Global' or 'Private'
     const [activeView, setActiveView] = useState('home');
+
+    // Admin DMs
+    const [adminDMs, setAdminDMs] = useState([]);
 
     // New Features
     const [showMediaHistory, setShowMediaHistory] = useState(false);
@@ -47,7 +50,7 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
 
     const fetchChannels = async () => {
         try {
-            const res = await axios.get(`${API_URL}/api/channels`, {
+            const res = await axios.get(`${API_URL}/channels`, {
                 headers: { 'x-auth-token': localStorage.getItem('token') }
             });
             setChannels(res.data);
@@ -62,7 +65,7 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
 
     const fetchAllUsers = async () => {
         try {
-            const res = await axios.get(`${API_URL}/api/auth/users`, {
+            const res = await axios.get(`${API_URL}/auth/users`, {
                 headers: { 'x-auth-token': localStorage.getItem('token') }
             });
             setAllUsers(Array.isArray(res.data) ? res.data : res.data.users || []);
@@ -74,9 +77,20 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
         }
     };
 
+    const fetchAdminDMs = async () => {
+        try {
+            const res = await axios.get(`${API_URL}/channels/admin/dms`, {
+                headers: { 'x-auth-token': localStorage.getItem('token') }
+            });
+            setAdminDMs(res.data);
+        } catch (err) {
+            console.error("Failed to fetch admin DMs", err);
+        }
+    };
+
     const fetchUnreadCounts = async () => {
         try {
-            const res = await axios.get(`${API_URL}/api/messages/unread/counts`, {
+            const res = await axios.get(`${API_URL}/messages/unread/counts`, {
                 headers: { 'x-auth-token': localStorage.getItem('token') }
             });
             setUnreadCounts(res.data);
@@ -87,7 +101,7 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
 
     const markChannelAsRead = async (channelId) => {
         try {
-            await axios.put(`${API_URL}/api/messages/read/${channelId}`, {}, {
+            await axios.put(`${API_URL}/messages/read/${channelId}`, {}, {
                 headers: { 'x-auth-token': localStorage.getItem('token') }
             });
             setUnreadCounts(prev => {
@@ -106,7 +120,7 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
 
     const handleCreateChannel = async (channelData) => {
         try {
-            const res = await axios.post(`${API_URL}/api/channels`, channelData, {
+            const res = await axios.post(`${API_URL}/channels`, channelData, {
                 headers: { 'x-auth-token': localStorage.getItem('token') }
             });
             setChannels([...channels, res.data]);
@@ -136,7 +150,7 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
         }
 
         try {
-            const res = await axios.post(`${API_URL}/api/channels`, {
+            const res = await axios.post(`${API_URL}/channels`, {
                 type: 'DM',
                 targetUserId: targetUserId,
                 name: 'dm-temp'
@@ -170,7 +184,7 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
         if (!channelToDelete) return;
 
         try {
-            await axios.delete(`${API_URL}/api/channels/${channelToDelete._id}`, {
+            await axios.delete(`${API_URL}/channels/${channelToDelete._id}`, {
                 headers: { 'x-auth-token': localStorage.getItem('token') }
             });
 
@@ -275,7 +289,10 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
         fetchChannels();
         fetchAllUsers(); // Fetch all users on mount for DM list
         fetchUnreadCounts(); // Fetch unread counts on mount
-    }, []);
+        if (user && (user.role?.includes('Super Admin') || user.role?.includes('Admin'))) {
+            fetchAdminDMs();
+        }
+    }, [user]);
 
     // ... (rest of useEffects)
 
@@ -290,13 +307,21 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
 
         // Map existing DMs to their target user IDs and deduplicate existing DMs if necessary
         existingDMs.forEach(dm => {
-            const otherUser = dm.allowedUsers.find(u => (u._id || u).toString() !== (user._id || user.id).toString());
+            // Find the other user from primaryUsers if available, fallback to allowedUsers
+            const targetUsers = dm.primaryUsers?.length > 0 ? dm.primaryUsers : dm.allowedUsers;
+            const otherUser = targetUsers?.find(u => (u._id || u).toString() !== (user._id || user.id).toString());
+
+            // If we are a super admin explicitly viewing someone else's DM (and we are NOT one of the primary participants)
+            // We still just add the DM to the list as it is. We handle the display name separately.
             if (otherUser) {
                 const otherUserId = (otherUser._id || otherUser).toString();
                 if (!dmUserIds.has(otherUserId)) {
                     dmUserIds.add(otherUserId);
                     uniqueDMs.push(dm);
                 }
+            } else if (targetUsers && targetUsers.length > 0) {
+                // Even if we don't find "another" user (e.g. self DM or edge case), ensure it's in the list
+                uniqueDMs.push(dm);
             }
         });
 
@@ -359,7 +384,21 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
         if (!user || !channel) return '';
 
         if (channel.type === 'DM') {
-            const otherUser = channel.allowedUsers.find(u => (u._id || u).toString() !== (user._id || user.id).toString());
+            const targetUsers = channel.primaryUsers?.length > 0 ? channel.primaryUsers : channel.allowedUsers;
+
+            // If the current user is NOT in the targetUsers (Super Admin observer)
+            const isObserver = targetUsers && !targetUsers.some(u => (u._id || u).toString() === (user._id || user.id).toString());
+
+            if (isObserver && targetUsers?.length >= 2) {
+                // Show both participants
+                const user1 = allUsers.find(u => u._id === (targetUsers[0]._id || targetUsers[0]));
+                const user2 = allUsers.find(u => u._id === (targetUsers[1]._id || targetUsers[1]));
+                if (user1 && user2) {
+                    return `${user1.name} & ${user2.name}`;
+                }
+            }
+
+            const otherUser = targetUsers?.find(u => (u._id || u).toString() !== (user._id || user.id).toString());
 
             let targetUser = otherUser;
             if (otherUser && (typeof otherUser === 'string' || !otherUser.role)) {
@@ -406,7 +445,21 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
 
     const getChannelName = (channel) => {
         if (channel.type === 'DM') {
-            const otherUser = channel.allowedUsers.find(u => (u._id || u).toString() !== (user._id || user.id).toString());
+            const targetUsers = channel.primaryUsers?.length > 0 ? channel.primaryUsers : channel.allowedUsers;
+
+            // If the current user is NOT in the targetUsers (Super Admin observer case)
+            const isObserver = targetUsers && !targetUsers.some(u => (u._id || u).toString() === (user._id || user.id).toString());
+
+            if (isObserver && targetUsers?.length >= 2) {
+                // Show both participants
+                const user1 = allUsers.find(u => u._id === (targetUsers[0]._id || targetUsers[0]));
+                const user2 = allUsers.find(u => u._id === (targetUsers[1]._id || targetUsers[1]));
+                if (user1 && user2) {
+                    return `${user1.name} & ${user2.name}`;
+                }
+            }
+
+            const otherUser = targetUsers?.find(u => (u._id || u).toString() !== (user._id || user.id).toString());
 
             // Try to find full user object from allUsers if possible to get role
             let targetUser = otherUser;
@@ -444,9 +497,9 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
                         {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                     </button>
 
-                    <button
+                    <div
                         onClick={() => handleChannelClick(channel)}
-                        className="flex-1 flex items-center text-left min-w-0"
+                        className="flex-1 flex items-center text-left min-w-0 cursor-pointer"
                     >
                         {/* Branch Indicator for deep levels */}
                         {level > 0 && <CornerDownRight size={14} className="mr-2 text-primary-600/70 shrink-0" />}
@@ -476,7 +529,7 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
                                 )}
                             </span>
                         </div>
-                    </button>
+                    </div>
 
 
                 </div>
@@ -576,6 +629,10 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
                         {renderRailItem('dept', <Layers size={20} />, "Dept")}
                         {renderRailItem('task', <Briefcase size={20} />, "Tasks")}
                         {renderRailItem('dm', <MessagesSquare size={20} />, "DM")}
+
+                        {(user?.role?.includes('Super Admin') || user?.role?.includes('Admin')) && (
+                            renderRailItem('admin_dms', <Users size={20} />, "Admin 1on1")
+                        )}
 
                         <button
                             onClick={() => {
@@ -744,6 +801,22 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
                             </>
                         )}
 
+                        {/* Admin One-on-One Channels Section */}
+                        {activeView === 'admin_dms' && (user?.role?.includes('Super Admin') || user?.role?.includes('Admin')) && (
+                            <>
+                                <div className="px-2 mb-1 mt-4 flex justify-between text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                    <span>One on One Channels</span>
+                                </div>
+                                {adminDMs.length === 0 ? (
+                                    <div className="px-4 py-8 text-center text-gray-500 text-sm">
+                                        No active one-on-one channels found.
+                                    </div>
+                                ) : (
+                                    buildTree(adminDMs).map(node => renderChannelNode(node))
+                                )}
+                            </>
+                        )}
+
                         {/* Activity View Section */}
                         {activeView === 'activity' && (
                             <>
@@ -887,7 +960,7 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
                                                     onClick={async () => {
                                                         const newRole = managerSelectedUser.role === 'User' ? 'Manager' : 'User';
                                                         if (confirm(`Change role to ${newRole}?`)) {
-                                                            await axios.put(`${API_URL}/api/auth/users/${managerSelectedUser._id}/role`, { role: newRole }, { headers: { 'x-auth-token': localStorage.getItem('token') } });
+                                                            await axios.put(`${API_URL}/auth/users/${managerSelectedUser._id}/role`, { role: newRole }, { headers: { 'x-auth-token': localStorage.getItem('token') } });
                                                             fetchAllUsers(); setManagerSelectedUser(null);
                                                         }
                                                     }}

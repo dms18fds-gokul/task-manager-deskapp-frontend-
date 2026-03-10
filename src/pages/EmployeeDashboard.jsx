@@ -7,7 +7,7 @@ import TaskDetailsModal from "../components/TaskDetailsModal";
 import LogEntryModal from "../components/LogEntryModal";
 import LeaveDetailsModal from "../components/LeaveDetailsModal"; // Verified Import
 import CustomDropdown from "../components/CustomDropdown";
-import { FaTasks, FaClipboardList, FaEllipsisV, FaEye, FaCheck, FaTimes, FaExclamationCircle, FaEnvelope, FaCalendarAlt, FaRedo } from "react-icons/fa";
+import { FaTasks, FaClipboardList, FaEllipsisV, FaEye, FaCheck, FaTimes, FaExclamationCircle, FaEnvelope, FaCalendarAlt, FaRedo, FaSignInAlt, FaSignOutAlt, FaClock, FaSearch } from "react-icons/fa";
 import { MdPendingActions, MdCheckCircle, MdCancel } from "react-icons/md";
 
 const EmployeeDashboard = () => {
@@ -34,13 +34,23 @@ const EmployeeDashboard = () => {
     const [openLeaveDropdownId, setOpenLeaveDropdownId] = useState(null); // For Leave Table Dropdown
     const [selectedRejectionReason, setSelectedRejectionReason] = useState(null);
 
-    // Filter State
+    const defaultFilter = { project: "", assignedBy: "", priority: "", status: "", fromDate: "", toDate: "" };
+
+    // Filter State keyed by activeCard
     const [filters, setFilters] = useState({
-        project: "",
-        priority: "",
-        status: "",
-        fromDate: "",
-        toDate: ""
+        total: { ...defaultFilter },
+        inProgress: { ...defaultFilter },
+        completed: { ...defaultFilter },
+        invitations: { ...defaultFilter },
+        today: { ...defaultFilter }
+    });
+
+    const [appliedFilters, setAppliedFilters] = useState({
+        total: { ...defaultFilter },
+        inProgress: { ...defaultFilter },
+        completed: { ...defaultFilter },
+        invitations: { ...defaultFilter },
+        today: { ...defaultFilter }
     });
 
     // Log Modal State
@@ -132,28 +142,7 @@ const EmployeeDashboard = () => {
         }
     };
 
-    const handleAttendanceAction = async (action) => {
-        if (!user) return;
-        setLoading(true);
-        try {
-            const res = await fetch(`${API_URL}/attendance/${action}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ employeeId: user.id || user._id }),
-            });
-            if (res.ok) {
-                const data = await res.json();
-                setAttendance(data.attendance); // Update state with latest attendance object
-            } else {
-                const err = await res.json();
-                alert(err.message);
-            }
-        } catch (error) {
-            console.error(`Error performing ${action}:`, error);
-        } finally {
-            setLoading(false);
-        }
-    };
+
 
     const toggleTaskDropdown = (id) => {
         setOpenTaskDropdownId(openTaskDropdownId === id ? null : id);
@@ -254,26 +243,35 @@ const EmployeeDashboard = () => {
                 currentList = [];
         }
 
-        // 2. Apply Manual Filters
-        if (filters.project) {
-            currentList = currentList.filter(t => t.projectName?.toLowerCase().includes(filters.project.toLowerCase()));
+        // 2. Apply Manual Filters for the currently active card
+        const currentAppliedFilters = appliedFilters[activeCard] || defaultFilter;
+
+        if (currentAppliedFilters.project) {
+            currentList = currentList.filter(t => t.projectName?.toLowerCase().includes(currentAppliedFilters.project.toLowerCase()));
         }
-        if (filters.priority) {
-            currentList = currentList.filter(t => t.priority === filters.priority);
-        }
-        if (filters.status) {
-            currentList = currentList.filter(t => t.status === filters.status);
-        }
-        if (filters.fromDate) {
+        if (currentAppliedFilters.assignedBy) {
             currentList = currentList.filter(t => {
-                if (!t.startDate) return false;
-                return new Date(t.startDate) >= new Date(filters.fromDate);
+                if (!t.assignedBy) return false;
+                const assignedByName = typeof t.assignedBy === 'object' ? t.assignedBy.name : t.assignedBy;
+                return assignedByName === currentAppliedFilters.assignedBy;
             });
         }
-        if (filters.toDate) {
+        if (currentAppliedFilters.priority) {
+            currentList = currentList.filter(t => t.priority === currentAppliedFilters.priority);
+        }
+        if (currentAppliedFilters.status) {
+            currentList = currentList.filter(t => t.status === currentAppliedFilters.status);
+        }
+        if (currentAppliedFilters.fromDate) {
             currentList = currentList.filter(t => {
                 if (!t.startDate) return false;
-                return new Date(t.startDate) <= new Date(filters.toDate);
+                return new Date(t.startDate) >= new Date(currentAppliedFilters.fromDate);
+            });
+        }
+        if (currentAppliedFilters.toDate) {
+            currentList = currentList.filter(t => {
+                if (!t.startDate) return false;
+                return new Date(t.startDate) <= new Date(currentAppliedFilters.toDate);
             });
         }
 
@@ -318,6 +316,10 @@ const EmployeeDashboard = () => {
 
     const groupedTasks = getGroupedTasks();
     const uniqueProjects = [...new Set(tasks.map(t => t.projectName))];
+    const uniqueAssigners = [...new Set(tasks.map(t => {
+        if (!t.assignedBy) return "Super Admin";
+        return typeof t.assignedBy === 'object' ? t.assignedBy.name : t.assignedBy;
+    }))];
 
     const getTableTitle = () => {
         switch (activeCard) {
@@ -333,7 +335,7 @@ const EmployeeDashboard = () => {
     if (!user) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
 
     return (
-        <div className="flex min-h-screen bg-gray-100 font-sans relative">
+        <div className="flex h-screen overflow-hidden bg-gray-100 font-sans relative">
             {/* Desktop Sidebar */}
             <EmployeeSidebar className="hidden md:flex" />
 
@@ -350,7 +352,7 @@ const EmployeeDashboard = () => {
             )}
 
             {/* Main Content */}
-            <div className="flex-1 flex flex-col h-screen overflow-hidden">
+            <div className="flex-1 min-w-0 flex flex-col h-screen overflow-hidden">
                 {/* Header (Mobile toggle) */}
                 <header className="bg-white shadow-sm p-4 flex justify-between items-center md:hidden z-10">
                     <h1 className="text-xl font-bold text-gray-800">UserPanel</h1>
@@ -364,10 +366,10 @@ const EmployeeDashboard = () => {
                     </button>
                 </header>
 
-                <main className="flex-1 p-6 overflow-y-auto">
-                    <div className="mb-6 flex justify-between items-end">
+                <main className="flex-1 p-6 overflow-y-auto w-full h-full relative space-y-4">
+                    <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
                         <div>
-                            <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
+                            <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Dashboard</h1>
                             <div className="mt-3">
                                 <p className="text-xl font-medium text-gray-500 mb-1">Hi, Welcome Back 👋</p>
                                 <div className="flex items-center gap-2">
@@ -383,110 +385,45 @@ const EmployeeDashboard = () => {
                                 </p>
                             </div>
                         </div>
-                        <div className="text-xs font-mono bg-white border border-gray-200 px-5 py-5 rounded shadow-sm text-gray-600 flex items-center">
-                            <span className="w-2 h-2 rounded-full bg-green-50 mr-2"></span>
-                            {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                        </div>
-                    </div>
-
-                    {/* Attendance Box */}
-                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-8 transition-all hover:shadow-md">
-                        <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6">
-                            <div>
-                                <h2 className="text-xl font-bold text-gray-800 flex items-center gap-3">
-                                    <span className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
-                                        <FaClipboardList size={20} />
-                                    </span>
-                                    Attendance Tracker
-                                </h2>
-                                <p className="text-gray-500 text-xs mt-1 ml-10">Manage your daily work schedule efficiently.</p>
+                        <div className="flex flex-col items-end gap-3">
+                            {/* Date Badge */}
+                            <div className="text-xs font-mono bg-white border border-gray-200 px-4 py-2 rounded-lg shadow-sm text-gray-600 flex items-center">
+                                <span className={`w-2 h-2 rounded-full mr-2 ${attendance?.status === "Present" ? "bg-emerald-400 animate-pulse" : "bg-gray-300"}`}></span>
+                                {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                             </div>
-                            <div className="mt-4 md:mt-0 flex items-center gap-3 bg-gray-50 px-4 py-2 rounded-xl border border-gray-100">
-                                <span className="text-gray-500 text-sm font-medium">Current Status:</span>
-                                <span className={`px-4 py-1.5 rounded-lg text-sm font-bold uppercase tracking-wide shadow-sm ${attendance?.status === "Present" ? "bg-emerald-100 text-emerald-700 border border-emerald-200" : "bg-gray-200 text-gray-600 border border-gray-300"}`}>
-                                    {attendance?.status || "Absent"}
-                                </span>
-                            </div>
-                        </div>
 
-                        <div className="flex justify-center mb-6">
-                            <button
-                                onClick={() => {
-                                    if (!attendance?.loginTime) {
-                                        handleAttendanceAction("login");
-                                    } else if (!attendance?.logoutTime) {
-                                        handleAttendanceAction("logout");
-                                    }
-                                }}
-                                disabled={loading || !!attendance?.logoutTime}
-                                className={`relative w-full md:w-2/3 group overflow-hidden rounded-2xl p-6 text-left transition-all duration-300 transform hover:-translate-y-1 hover:shadow-2xl border ${attendance?.logoutTime
-                                    ? "bg-gray-100 border-gray-200 cursor-not-allowed opacity-70"
-                                    : !attendance?.loginTime
-                                        ? "bg-white border-indigo-100 hover:border-indigo-300"
-                                        : "bg-white border-rose-100 hover:border-rose-300"
-                                    }`}
-                            >
-                                <div className={`absolute inset-0 opacity-0 group-hover:opacity-10 transition-opacity duration-300 ${attendance?.logoutTime ? ""
-                                    : !attendance?.loginTime ? "bg-indigo-600"
-                                        : "bg-rose-600"
-                                    }`}></div>
-
-                                <div className="flex items-center justify-between z-10 relative">
-                                    <div className="flex items-center gap-6">
-                                        <div className={`p-4 rounded-xl shadow-md transition-all duration-300 group-hover:scale-110 ${attendance?.logoutTime
-                                            ? "bg-gray-200 text-gray-400"
-                                            : !attendance?.loginTime
-                                                ? "bg-indigo-100 text-indigo-600"
-                                                : "bg-rose-100 text-rose-600"
-                                            }`}>
-                                            {attendance?.logoutTime ? <MdCheckCircle size={32} />
-                                                : !attendance?.loginTime ? <FaClipboardList size={32} />
-                                                    : <MdCancel size={32} />
-                                            }
-                                        </div>
-                                        <div>
-                                            <h3 className="text-xl font-bold text-gray-800">
-                                                {attendance?.logoutTime ? "Day Completed"
-                                                    : !attendance?.loginTime ? "Morning Login"
-                                                        : "Logout"
-                                                }
-                                            </h3>
-                                            <p className="text-gray-500 mt-1 font-medium text-sm">
-                                                {attendance?.logoutTime ? "See you tomorrow! 👋"
-                                                    : !attendance?.loginTime ? "Start your day by logging in."
-                                                        : "Click to end your work day."
-                                                }
-                                            </p>
-                                        </div>
+                            {/* Compact Attendance Card */}
+                            <div className="bg-white border border-gray-100 px-5 py-3 rounded-xl shadow-sm flex items-center gap-5 transition-all hover:shadow-md">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-blue-50 text-blue-500 rounded-lg shadow-sm border border-blue-100">
+                                        <FaSignInAlt size={14} />
                                     </div>
-
-                                    {!attendance?.logoutTime && (
-                                        <div className="hidden md:flex h-10 w-10 items-center justify-center rounded-full bg-gray-50 group-hover:bg-white transition-colors border border-gray-100">
-                                            <svg className="w-5 h-5 text-gray-400 group-hover:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path>
-                                            </svg>
-                                        </div>
-                                    )}
+                                    <div className="flex flex-col">
+                                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">In Time</span>
+                                        <span className={`text-sm font-black ${attendance?.loginTime ? "text-gray-800" : "text-gray-300"}`}>
+                                            {attendance?.loginTime ? new Date(attendance.loginTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
+                                        </span>
+                                    </div>
                                 </div>
-                            </button>
-                        </div>
 
-                        {/* Status Details Footer */}
-                        <div className="mt-6 pt-4 border-t border-gray-100 grid grid-cols-2 gap-4">
-                            <div className="flex flex-col">
-                                <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider mb-1">LOGIN TIME</span>
-                                <span className={`text-sm font-medium ${attendance?.loginTime ? "text-gray-800" : "text-gray-400 italic"}`}>
-                                    {attendance?.loginTime ? new Date(attendance.loginTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
-                                </span>
-                            </div>
-                            <div className="flex flex-col">
-                                <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider mb-1">LOGOUT TIME</span>
-                                <span className={`text-sm font-medium ${attendance?.logoutTime ? "text-gray-800" : "text-gray-400 italic"}`}>
-                                    {attendance?.logoutTime ? new Date(attendance.logoutTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
-                                </span>
+                                <div className="w-px h-8 bg-gray-200"></div>
+
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-rose-50 text-rose-500 rounded-lg shadow-sm border border-rose-100">
+                                        <FaSignOutAlt size={14} />
+                                    </div>
+                                    <div className="flex flex-col">
+                                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Out Time</span>
+                                        <span className={`text-sm font-black ${attendance?.logoutTime ? "text-gray-800" : "text-gray-300"}`}>
+                                            {attendance?.logoutTime ? new Date(attendance.logoutTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--"}
+                                        </span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
+
+
 
                     {/* Stats Grid - 6 columns */}
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-6">
@@ -549,94 +486,111 @@ const EmployeeDashboard = () => {
                     {/* Task Table Section (Visible only when filtering is active) */}
                     {activeCard && activeCard !== 'leaves' && (
                         <div className="bg-white rounded-xl shadow-sm border border-gray-100 mb-8 animate-fade-in-up">
-                            <div className="p-6 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                            <div className="p-4 sm:p-6 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                                 <h3 className="text-lg font-bold text-gray-800">{getTableTitle()}</h3>
                             </div>
 
                             {/* Filter Navbar */}
-                            <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6 items-end">
-                                {/* From Date */}
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">From Date</label>
-                                    <div className="relative">
-                                        <input
-                                            type="date"
-                                            value={filters.fromDate}
-                                            onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })}
-                                            className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 hover:bg-white text-gray-700 font-medium"
+                            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-5 mb-6">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 items-end">
+                                    {/* From Date */}
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">From Date</label>
+                                        <div className="relative">
+                                            <input
+                                                type="date"
+                                                value={filters[activeCard]?.fromDate || ""}
+                                                onChange={(e) => setFilters({ ...filters, [activeCard]: { ...filters[activeCard], fromDate: e.target.value } })}
+                                                className="w-full px-3 py-2 pl-9 rounded text-[13px] border border-gray-200 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-medium h-[38px] cursor-pointer"
+                                            />
+                                            <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                                        </div>
+                                    </div>
+
+                                    {/* To Date */}
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">To Date</label>
+                                        <div className="relative">
+                                            <input
+                                                type="date"
+                                                value={filters[activeCard]?.toDate || ""}
+                                                onChange={(e) => setFilters({ ...filters, [activeCard]: { ...filters[activeCard], toDate: e.target.value } })}
+                                                className="w-full px-3 py-2 pl-9 rounded text-[13px] border border-gray-200 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-medium h-[38px] cursor-pointer"
+                                            />
+                                            <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                                        </div>
+                                    </div>
+
+                                    {/* Project Name */}
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Project</label>
+                                        <CustomDropdown
+                                            options={[{ value: "", label: "All Projects" }, ...uniqueProjects.map(p => ({ value: p, label: p }))]}
+                                            value={filters[activeCard]?.project || ""}
+                                            onChange={(val) => setFilters({ ...filters, [activeCard]: { ...filters[activeCard], project: val } })}
+                                            placeholder="All Projects"
+                                            className="border-gray-200 text-[13px] font-medium h-[38px] hover:border-gray-300 transition-colors"
                                         />
-                                        <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                                    </div>
+
+                                    {/* Assigned By */}
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Assigned By</label>
+                                        <CustomDropdown
+                                            options={[
+                                                { value: "", label: "All Assigners" },
+                                                ...uniqueAssigners.map(name => ({ value: name, label: name }))
+                                            ]}
+                                            value={filters[activeCard]?.assignedBy || ""}
+                                            onChange={(val) => setFilters({ ...filters, [activeCard]: { ...filters[activeCard], assignedBy: val } })}
+                                            placeholder="All Assigners"
+                                            className="border-gray-200 text-[13px] font-medium h-[38px] hover:border-gray-300 transition-colors"
+                                        />
+                                    </div>
+
+                                    {/* Priority */}
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Priority</label>
+                                        <CustomDropdown
+                                            options={[{ value: "", label: "All Priorities" }, { value: "High", label: "High" }, { value: "Medium", label: "Medium" }, { value: "Low", label: "Low" }]}
+                                            value={filters[activeCard]?.priority || ""}
+                                            onChange={(val) => setFilters({ ...filters, [activeCard]: { ...filters[activeCard], priority: val } })}
+                                            placeholder="All Priorities"
+                                            className="border-gray-200 text-[13px] font-medium h-[38px] hover:border-gray-300 transition-colors"
+                                        />
+                                    </div>
+
+                                    {/* Status */}
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Status</label>
+                                        <CustomDropdown
+                                            options={[{ value: "", label: "All Statuses" }, { value: "In Progress", label: "In Progress" }, { value: "Hold", label: "Hold" }, { value: "Completed", label: "Completed" }]}
+                                            value={filters[activeCard]?.status || ""}
+                                            onChange={(val) => setFilters({ ...filters, [activeCard]: { ...filters[activeCard], status: val } })}
+                                            placeholder="All Statuses"
+                                            className="border-gray-200 text-[13px] font-medium h-[38px] hover:border-gray-300 transition-colors"
+                                        />
                                     </div>
                                 </div>
 
-                                {/* To Date */}
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">To Date</label>
-                                    <div className="relative">
-                                        <input
-                                            type="date"
-                                            value={filters.toDate}
-                                            onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
-                                            className="w-full px-3 py-2 pl-9 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 hover:bg-white text-gray-700 font-medium"
-                                        />
-                                        <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
-                                    </div>
-                                </div>
-
-                                {/* Project Filter */}
-                                <div>
-                                    <CustomDropdown
-                                        label="Project"
-                                        value={filters.project}
-                                        onChange={(val) => setFilters({ ...filters, project: val })}
-                                        options={[
-                                            { value: "", label: "All Projects" },
-                                            ...uniqueProjects.map(p => ({ value: p, label: p }))
-                                        ]}
-                                        placeholder="All Projects"
-                                    />
-                                </div>
-
-                                {/* Priority Filter */}
-                                <div>
-                                    <CustomDropdown
-                                        label="Priority"
-                                        value={filters.priority}
-                                        onChange={(val) => setFilters({ ...filters, priority: val })}
-                                        options={[
-                                            { value: "", label: "All Priorities" },
-                                            { value: "High", label: "High" },
-                                            { value: "Medium", label: "Medium" },
-                                            { value: "Low", label: "Low" }
-                                        ]}
-                                        placeholder="All Priorities"
-                                    />
-                                </div>
-
-                                {/* Status Filter */}
-                                <div>
-                                    <CustomDropdown
-                                        label="Status"
-                                        value={filters.status}
-                                        onChange={(val) => setFilters({ ...filters, status: val })}
-                                        options={[
-                                            { value: "", label: "All Statuses" },
-                                            { value: "In Progress", label: "In Progress" },
-                                            { value: "Hold", label: "Hold" },
-                                            { value: "Completed", label: "Completed" }
-                                        ]}
-                                        placeholder="All Statuses"
-                                    />
-                                </div>
-
-                                {/* Reset Button */}
-                                <div className="flex justify-start"> {/* Align left or center? User said "fixed in the same row", Inputs are full width. Let's align it to start to match left alignment of labels, or maybe just center it. Admin has it flexible. Let's try to make it look good. Standard inputs are ~42px high. This button with p-3 is also around that. */}
+                                {/* Action Buttons Row */}
+                                <div className="flex justify-end items-center gap-3">
                                     <button
-                                        onClick={() => setFilters({ project: "", priority: "", status: "", fromDate: "", toDate: "" })}
-                                        className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 p-3 rounded-full transition-all shadow-sm active:scale-95 flex items-center justify-center transform hover:rotate-180 duration-500"
+                                        onClick={() => {
+                                            const resetFilters = { project: "", assignedBy: "", priority: "", status: "", fromDate: "", toDate: "" };
+                                            setFilters({ ...filters, [activeCard]: resetFilters });
+                                            setAppliedFilters({ ...appliedFilters, [activeCard]: resetFilters });
+                                        }}
+                                        className="bg-red-50 hover:bg-red-100 text-red-600 px-4 rounded-lg h-[38px] text-[13px] font-bold transition-all shadow-sm flex items-center justify-center transform active:scale-95 duration-200 cursor-pointer"
                                         title="Reset Filters"
                                     >
                                         <FaRedo className="text-sm" />
+                                    </button>
+                                    <button
+                                        onClick={() => setAppliedFilters({ ...appliedFilters, [activeCard]: filters[activeCard] })}
+                                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 rounded-lg h-[38px] text-[13px] font-bold transition-all shadow-md flex items-center justify-center gap-2 transform active:scale-95 duration-200 whitespace-nowrap"
+                                    >
+                                        <FaSearch /> Fetch Data
                                     </button>
                                 </div>
                             </div>
@@ -652,8 +606,8 @@ const EmployeeDashboard = () => {
                                                 <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-700">{tasks.length}</span>
                                             </div>
 
-                                            <div className="overflow-x-auto rounded-xl border border-gray-100">
-                                                <table className="w-full text-left border-collapse table-fixed">
+                                            <div className="w-full overflow-x-auto custom-scrollbar rounded-xl border border-gray-100">
+                                                <table className="w-full text-left border-collapse min-w-[1000px] xl:min-w-full table-fixed">
                                                     <thead className="bg-gray-50/50 text-left border-b border-gray-200">
                                                         <tr>
                                                             <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[5%] text-center">S.No</th>
@@ -733,7 +687,6 @@ const EmployeeDashboard = () => {
                     )}
 
                     {/* Leave History Table (Visible only when 'leaves' card is active) */}
-                    {/* Leave History Table (Visible only when 'leaves' card is active) */}
                     {
                         activeCard === 'leaves' && (
                             <div className="bg-white rounded-2xl shadow-xl border border-gray-100 mb-8 animate-fade-in-up">
@@ -749,8 +702,8 @@ const EmployeeDashboard = () => {
                                     </span>
                                 </div>
 
-                                <div className="overflow-x-auto pb-40">
-                                    <table className="w-full text-left border-collapse">
+                                <div className="w-full overflow-x-auto custom-scrollbar pb-40">
+                                    <table className="w-full text-left border-collapse min-w-[800px] xl:min-w-full">
                                         <thead>
                                             <tr className="bg-gray-50/50 border-b border-gray-200 text-gray-500 text-xs font-extrabold uppercase tracking-wider">
                                                 <th className="px-6 py-4 w-[5%] text-center">S.No</th>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import LogDetailsModal from '../components/LogDetailsModal';
@@ -6,7 +6,7 @@ import TaskDetailsModal from '../components/TaskDetailsModal';
 import CustomDropdown from '../components/CustomDropdown';
 import DownloadDropdown from '../components/DownloadDropdown';
 import {
-    Search, User, Briefcase, Calendar, Clock, Image as ImageIcon,
+    Search, User, Users, Briefcase, Calendar, Clock, Image as ImageIcon,
     CheckCircle, XCircle, AlertCircle, FileText, CheckSquare, Coffee,
     Camera, Filter
 } from 'lucide-react';
@@ -24,10 +24,63 @@ const EmployeeReportPage = () => {
     const [selectedTaskForDetails, setSelectedTaskForDetails] = useState(null);
 
     // Filter State
-    const [dateFilterType, setDateFilterType] = useState('Last 30 Days / Month');
+    const [dateFilterType, setDateFilterType] = useState('Last 7 Days / Week');
     const [particularDate, setParticularDate] = useState('');
     const [fromDate, setFromDate] = useState('');
     const [toDate, setToDate] = useState('');
+
+    const [appliedFilter, setAppliedFilter] = useState({
+        dateFilterType: 'Last 7 Days / Week',
+        particularDate: '',
+        fromDate: '',
+        toDate: ''
+    });
+
+    const [employees, setEmployees] = useState([]);
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+    const dropdownRef = useRef(null);
+
+    useEffect(() => {
+        const fetchEmployees = async () => {
+            try {
+                const res = await axios.get(`${API_URL}/employee/all`);
+                setEmployees(res.data);
+            } catch (err) {
+                console.error("Failed to fetch employees for search:", err);
+            }
+        };
+        fetchEmployees();
+    }, []);
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setIsDropdownOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const getSafeString = (val) => Array.isArray(val) ? val.join(', ') : (val || '');
+
+    const filteredEmployees = employees.filter(emp => {
+        const query = searchQuery.toLowerCase();
+        const dept = getSafeString(emp.department);
+        const role = getSafeString(emp.role);
+        const desig = getSafeString(emp.designation);
+        const deptStr = dept || role || desig || 'No Dept';
+
+        const fullString = `${emp.name} – ${deptStr} – ${emp.employeeId}`.toLowerCase();
+        return (
+            fullString.includes(query) ||
+            (emp.name || '').toLowerCase().includes(query) ||
+            (emp.employeeId || '').toLowerCase().includes(query) ||
+            dept.toLowerCase().includes(query) ||
+            role.toLowerCase().includes(query) ||
+            desig.toLowerCase().includes(query)
+        );
+    });
 
     const handleActionClick = (log, index) => {
         setSelectedLog({ ...log, displayTaskNo: (log.taskNo || log["Task No"] || "0").toString().padStart(2, '0') });
@@ -45,9 +98,19 @@ const EmployeeReportPage = () => {
         setError('');
         setEmployeeData(null);
 
+        // Extract ID if it's in the composite format
+        let searchId = searchQuery.trim();
+        if (searchId.includes(' – ')) {
+            const parts = searchId.split(' – ');
+            searchId = parts[parts.length - 1].trim();
+        } else if (searchId.includes(' - ')) {
+            const parts = searchId.split(' - ');
+            searchId = parts[parts.length - 1].trim();
+        }
+
         try {
             // 1. Fetch Core Profile
-            const profileRes = await axios.get(`${API_URL}/employee/${searchQuery.trim()}`);
+            const profileRes = await axios.get(`${API_URL}/employee/${searchId}`);
             const profile = profileRes.data;
 
             if (!profile || !profile._id) {
@@ -64,7 +127,7 @@ const EmployeeReportPage = () => {
                 axios.get(`${API_URL}/work-logs/employee/${mongoId}`),
                 axios.get(`${API_URL}/attendance/history/${mongoId}`),
                 axios.get(`${API_URL}/leave/my-leaves/${mongoId}`),
-                axios.get(`${API_URL}/sessions/employee/${searchQuery.trim()}/screenshots`)
+                axios.get(`${API_URL}/sessions/employee/${searchId}/screenshots`)
             ]);
 
             // Construct full data object
@@ -76,6 +139,14 @@ const EmployeeReportPage = () => {
                 leaves: leavesRes.status === 'fulfilled' ? leavesRes.value.data : [],
                 screenshots: screenshotsRes.status === 'fulfilled' ? screenshotsRes.value.data : []
             });
+
+            // Reset applied filter to default on new search if needed, or keep current.
+            // setAppliedFilter({
+            //     dateFilterType,
+            //     particularDate,
+            //     fromDate,
+            //     toDate
+            // });
 
         } catch (err) {
             console.error("Error fetching employee report data:", err);
@@ -103,11 +174,11 @@ const EmployeeReportPage = () => {
 
     const calculateDurationStr = (start, end) => {
         if (!start || !end) return "";
-        const [startHours, startMins] = start.split(':').map(Number);
-        const [endHours, endMins] = end.split(':').map(Number);
+        const [startHours, startMins, startSecs = 0] = start.split(':').map(Number);
+        const [endHours, endMins, endSecs = 0] = end.split(':').map(Number);
 
-        const startDate = new Date(0, 0, 0, startHours, startMins, 0);
-        const endDate = new Date(0, 0, 0, endHours, endMins, 0);
+        const startDate = new Date(0, 0, 0, startHours, startMins, startSecs);
+        const endDate = new Date(0, 0, 0, endHours, endMins, endSecs);
 
         let diff = endDate.getTime() - startDate.getTime();
 
@@ -115,14 +186,18 @@ const EmployeeReportPage = () => {
             diff += 24 * 60 * 60 * 1000;
         }
 
-        const hours = Math.floor(diff / 1000 / 60 / 60);
-        const minutes = Math.floor((diff / 1000 / 60 / 60 - hours) * 60);
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        diff -= hours * 1000 * 60 * 60;
+        const minutes = Math.floor(diff / (1000 * 60));
+        diff -= minutes * 1000 * 60;
+        const seconds = Math.floor(diff / 1000);
 
         let durationString = "";
         if (hours > 0) durationString += `${hours} hr${hours > 1 ? 's' : ''} `;
-        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''}`;
+        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''} `;
+        if (seconds > 0) durationString += `${seconds} sec${seconds > 1 ? 's' : ''}`;
 
-        return durationString.trim() || "0 min";
+        return durationString.trim() || "0 sec";
     };
 
     const formatHHMMSS = (totalSeconds) => {
@@ -137,9 +212,30 @@ const EmployeeReportPage = () => {
         ].join(':');
     };
 
-    const isDateInRange = (dateString, filterType) => {
+    const parseSafeDate = (dStr) => {
+        if (!dStr) return new Date(NaN);
+        // Handle DD-MM-YYYY or DD/MM/YYYY
+        const matchOpts = dStr.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+        if (matchOpts) {
+            const [_, d, m, y] = matchOpts;
+            return new Date(`${y}-${m}-${d}`);
+        }
+        // Handle DD-MM-YY or DD/MM/YY
+        const matchShort = dStr.match(/^(\d{2})[-/](\d{2})[-/](\d{2})$/);
+        if (matchShort) {
+            const [_, d, m, y] = matchShort;
+            return new Date(`20${y}-${m}-${d}`);
+        }
+        return new Date(dStr);
+    };
+
+    const isDateInRange = (dateString, filterObj) => {
+        const { dateFilterType: filterType, particularDate: pDate, fromDate: fDate, toDate: tDate } = filterObj;
+        if (filterType === 'All Time') return true;
         if (!dateString) return false;
-        const d = new Date(dateString);
+
+        const d = parseSafeDate(dateString);
+        if (isNaN(d.getTime())) return false;
         d.setHours(0, 0, 0, 0);
 
         const today = new Date();
@@ -148,14 +244,14 @@ const EmployeeReportPage = () => {
         if (filterType === 'Today') {
             return d.getTime() === today.getTime();
         } else if (filterType === 'Particular Date') {
-            if (!particularDate) return true;
-            const target = new Date(particularDate);
+            if (!pDate) return true;
+            const target = new Date(pDate);
             target.setHours(0, 0, 0, 0);
             return d.getTime() === target.getTime();
         } else if (filterType === 'From Date to To Date') {
-            let start = fromDate ? new Date(fromDate) : new Date(-8640000000000000);
+            let start = fDate ? new Date(fDate) : new Date(-8640000000000000);
             start.setHours(0, 0, 0, 0);
-            let end = toDate ? new Date(toDate) : new Date(8640000000000000);
+            let end = tDate ? new Date(tDate) : new Date(8640000000000000);
             end.setHours(23, 59, 59, 999);
             return d.getTime() >= start.getTime() && d.getTime() <= end.getTime();
         } else if (filterType === 'Last 7 Days / Week') {
@@ -170,9 +266,93 @@ const EmployeeReportPage = () => {
         return true;
     };
 
-    const filteredAttendance = employeeData?.attendanceHistory?.filter(record => isDateInRange(record.date, dateFilterType)) || [];
-    const filteredLogs = employeeData?.logs?.filter(log => isDateInRange(log.date || log.Date, dateFilterType)) || [];
-    const filteredTasks = employeeData?.tasks?.filter(task => isDateInRange(task.startDate || task.createdAt, dateFilterType)) || [];
+    const filteredAttendance = employeeData?.attendanceHistory?.filter(record => isDateInRange(record.date, appliedFilter)) || [];
+    const filteredLogs = employeeData?.logs?.filter(log => isDateInRange(log.date || log.Date, appliedFilter)) || [];
+    const filteredTasks = employeeData?.tasks?.filter(task => isDateInRange(task.startDate || task.createdAt, appliedFilter)) || [];
+
+    // --- Summary Calculations ---
+    const totalDays = filteredAttendance.length;
+
+    const totalActiveSeconds = filteredAttendance.reduce((acc, curr) => acc + (curr.activeTime || 0), 0);
+    const totalIdleSeconds = filteredAttendance.reduce((acc, curr) => acc + (curr.idleTime || 0), 0);
+    const totalWorkingSeconds = totalActiveSeconds + totalIdleSeconds;
+
+    const workingHours = formatHHMMSS(totalWorkingSeconds);
+    const activeHours = formatHHMMSS(totalActiveSeconds);
+    const idleHours = formatHHMMSS(totalIdleSeconds);
+
+    const parseDurationToSeconds = (durationStr) => {
+        if (!durationStr) return 0;
+        if (durationStr.includes(':')) {
+            const parts = durationStr.split(':').map(Number);
+            if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+            if (parts.length === 2) return parts[0] * 3600 + parts[1] * 60;
+            return 0;
+        }
+        let hours = 0;
+        let mins = 0;
+        let secs = 0;
+        const hrMatch = durationStr.match(/(\d+)\s*hr/);
+        const minMatch = durationStr.match(/(\d+)\s*min/);
+        const secMatch = durationStr.match(/(\d+)\s*sec/);
+        if (hrMatch) hours = parseInt(hrMatch[1], 10);
+        if (minMatch) mins = parseInt(minMatch[1], 10);
+        if (secMatch) secs = parseInt(secMatch[1], 10);
+        return hours * 3600 + mins * 60 + secs;
+    };
+
+    const totalQtSeconds = filteredLogs.reduce((acc, log) => {
+        const isQt = ["QT Task", "QT", "Quick"].includes(log.logType);
+        if (isQt) {
+            const timeStr = log.duration || log.timeAutomation || calculateDurationStr(log.startTime, log.endTime);
+            return acc + parseDurationToSeconds(timeStr);
+        }
+        return acc;
+    }, 0);
+    const qtHours = formatHHMMSS(totalQtSeconds);
+
+    const totalMeetingSeconds = filteredLogs.reduce((acc, log) => {
+        const taskType = log.taskType || log["Task Type"] || "";
+        const desc = log.description || log["Task Description"] || "";
+        const isMeeting = taskType.toLowerCase().includes('meeting') || desc.toLowerCase().includes('meeting');
+        if (isMeeting) {
+            const timeStr = log.duration || log.timeAutomation || calculateDurationStr(log.startTime, log.endTime);
+            return acc + parseDurationToSeconds(timeStr);
+        }
+        return acc;
+    }, 0);
+    const meetingHours = formatHHMMSS(totalMeetingSeconds);
+
+    const totalMainTaskSeconds = filteredLogs.reduce((acc, log) => {
+        const isQt = ["QT Task", "QT", "Quick"].includes(log.logType);
+        const taskType = log.taskType || log["Task Type"] || "";
+        const desc = log.description || log["Task Description"] || "";
+        const isMeeting = taskType.toLowerCase().includes('meeting') || desc.toLowerCase().includes('meeting');
+
+        if (!isQt && !isMeeting) {
+            const timeStr = log.duration || log.timeAutomation || calculateDurationStr(log.startTime, log.endTime);
+            return acc + parseDurationToSeconds(timeStr);
+        }
+        return acc;
+    }, 0);
+    const mainTaskHours = formatHHMMSS(totalMainTaskSeconds);
+
+    const quickTaskCount = filteredLogs.filter(log => ["QT Task", "QT", "Quick"].includes(log.logType)).length;
+
+    const meetingsCount = filteredLogs.filter(log => {
+        const taskType = log.taskType || log["Task Type"] || "";
+        const desc = log.description || log["Task Description"] || "";
+        return taskType.toLowerCase().includes('meeting') || desc.toLowerCase().includes('meeting');
+    }).length;
+
+    const mainTaskCount = filteredLogs.length - quickTaskCount - meetingsCount;
+
+    const totalTaskCount = filteredLogs.length;
+
+    const filteredLeaves = employeeData?.leaves?.filter(leave => isDateInRange(leave.leaveDate || leave.permissionDate || leave.createdAt || leave.startDate || leave.fromDate || leave.date, appliedFilter)) || [];
+    const leaveCount = filteredLeaves.length;
+    const dayLeavesCount = filteredLeaves.filter(l => l.leaveCategory === 'Day Leave').length;
+    const hourLeavesCount = filteredLeaves.filter(l => l.leaveCategory === 'Hour Permission').length;
 
     // --- Download Columns Definition ---
     const attendanceDownloadColumns = [
@@ -200,7 +380,7 @@ const EmployeeReportPage = () => {
         { header: "Task Type", accessor: (item) => item.taskType || item["Task Type"] },
         { header: "Description", accessor: (item) => item.description || item["Task Description"] },
         { header: "Time", accessor: (item) => `${formatTime(item.startTime || item["Start Time"])} - ${formatTime(item.endTime || item["End Time"])}` },
-        { header: "Duration", accessor: (item) => item.timeAutomation || item.duration || calculateDurationStr(item.startTime, item.endTime) },
+        { header: "Duration", accessor: (item) => item.duration || item.timeAutomation || calculateDurationStr(item.startTime, item.endTime) },
         { header: "Log Type", accessor: (item) => ["QT Task", "QT", "Quick"].includes(item.logType) ? "Quick" : "Main" },
         {
             header: "Status", accessor: (item) => {
@@ -233,8 +413,8 @@ const EmployeeReportPage = () => {
     return (
         <div className="flex h-screen bg-slate-50">
             <Sidebar />
-            <div className="flex-1 overflow-auto p-8 relative">
-                <div className="max-w-7xl mx-auto space-y-6">
+            <div className="flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-6 lg:p-8 relative">
+                <div className="w-full max-w-7xl mx-auto space-y-6">
 
                     {/* Header & Search */}
                     <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
@@ -244,25 +424,69 @@ const EmployeeReportPage = () => {
                                 <p className="text-sm text-slate-500 mt-1">Search and view comprehensive analytics for any employee.</p>
                             </div>
 
-                            <form onSubmit={handleSearch} className="flex w-full max-w-md items-center bg-white border border-slate-200 rounded-full shadow-sm hover:shadow-md focus-within:shadow-md focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10 transition-all duration-300 overflow-hidden pl-2 pr-1.5 py-1.5">
-                                <div className="pl-3 pr-2 flex items-center pointer-events-none">
-                                    <Search className="h-5 w-5 text-slate-400" />
-                                </div>
-                                <input
-                                    type="text"
-                                    className="flex-1 w-full bg-transparent border-none focus:ring-0 text-slate-700 placeholder-slate-400 outline-none sm:text-sm font-medium px-2"
-                                    placeholder="Enter Employee ID (e.g. FOXIAN001)"
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                />
-                                <button
-                                    type="submit"
-                                    disabled={loading}
-                                    className="inline-flex items-center justify-center px-6 py-2 text-sm font-semibold rounded-full text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500 disabled:opacity-50 transition-all shadow-sm hover:shadow"
-                                >
-                                    {loading ? 'Searching...' : 'Search'}
-                                </button>
-                            </form>
+                            <div className="relative w-full max-w-md" ref={dropdownRef}>
+                                <form onSubmit={handleSearch} className="flex w-full items-center bg-white border border-slate-200 rounded-full shadow-sm hover:shadow-md focus-within:shadow-md focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10 transition-all duration-300 overflow-hidden pl-2 pr-1.5 py-1.5 relative z-20">
+                                    <div className="pl-3 pr-2 flex items-center pointer-events-none">
+                                        <Search className="h-5 w-5 text-slate-400" />
+                                    </div>
+                                    <input
+                                        type="text"
+                                        className="flex-1 w-full bg-transparent border-none focus:ring-0 text-slate-700 placeholder-slate-400 outline-none sm:text-sm font-medium px-2"
+                                        placeholder="Search by Name, ID, or Dept..."
+                                        value={searchQuery}
+                                        onChange={(e) => {
+                                            setSearchQuery(e.target.value);
+                                            setIsDropdownOpen(true);
+                                        }}
+                                        onClick={() => setIsDropdownOpen(true)}
+                                        onFocus={() => setIsDropdownOpen(true)}
+                                    />
+                                    <button
+                                        type="submit"
+                                        disabled={loading}
+                                        className="inline-flex items-center justify-center px-6 py-2 text-sm font-semibold rounded-full text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500 disabled:opacity-50 transition-all shadow-sm hover:shadow"
+                                    >
+                                        {loading ? 'Searching...' : 'Search'}
+                                    </button>
+                                </form>
+
+                                {isDropdownOpen && employees.length > 0 && (
+                                    <div className="absolute top-[calc(100%+8px)] left-0 w-full bg-white border border-slate-200 rounded-xl shadow-[0_10px_40px_-15px_rgba(0,0,0,0.1)] z-[100] max-h-[320px] overflow-y-auto custom-scrollbar">
+                                        {filteredEmployees.length > 0 ? (
+                                            filteredEmployees.map((emp) => {
+                                                const dept = Array.isArray(emp.department) ? emp.department.join(', ') : emp.department;
+                                                const role = Array.isArray(emp.role) ? emp.role.join(', ') : emp.role;
+                                                const desig = Array.isArray(emp.designation) ? emp.designation.join(', ') : emp.designation;
+                                                const deptStr = dept || role || desig || 'No Dept';
+
+                                                return (
+                                                    <div
+                                                        key={emp._id}
+                                                        className="px-5 py-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 transition-colors group flex items-center gap-2"
+                                                        onClick={() => {
+                                                            setSearchQuery(`${emp.name} – ${deptStr} – ${emp.employeeId}`);
+                                                            setIsDropdownOpen(false);
+                                                        }}
+                                                    >
+                                                        <span className="font-bold text-slate-800 text-sm group-hover:text-blue-600 transition-colors whitespace-nowrap flex-shrink-0">{emp.name}</span>
+                                                        <span className="text-slate-300 font-bold flex-shrink-0">–</span>
+                                                        <span className="text-[11px] font-bold tracking-wider uppercase text-slate-500 bg-slate-100 px-2 py-0.5 rounded truncate min-w-0">
+                                                            {deptStr}
+                                                        </span>
+                                                        <span className="text-slate-300 font-bold flex-shrink-0">–</span>
+                                                        <span className="text-slate-500 font-mono text-xs flex-shrink-0 whitespace-nowrap">{emp.employeeId}</span>
+                                                    </div>
+                                                );
+                                            })
+                                        ) : (
+                                            <div className="px-5 py-8 text-center flex flex-col items-center justify-center">
+                                                <Search className="h-6 w-6 text-slate-300 mb-2" />
+                                                <span className="text-slate-500 text-sm font-medium mt-1">No employees match your search.</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                         {error && <p className="mt-3 text-sm text-red-600 font-medium">{error}</p>}
 
@@ -278,6 +502,7 @@ const EmployeeReportPage = () => {
                                         <div className="w-[220px]">
                                             <CustomDropdown
                                                 options={[
+                                                    "All Time",
                                                     "Today",
                                                     "Particular Date",
                                                     "From Date to To Date",
@@ -331,6 +556,15 @@ const EmployeeReportPage = () => {
                                             </div>
                                         </div>
                                     )}
+
+                                    <div className="flex flex-col animate-in fade-in zoom-in-95 duration-200">
+                                        <button
+                                            onClick={() => setAppliedFilter({ dateFilterType, particularDate, fromDate, toDate })}
+                                            className="px-6 py-2 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 outline-none focus:ring-2 focus:ring-blue-500 h-[38px] transition-all shadow-sm hover:shadow"
+                                        >
+                                            Apply
+                                        </button>
+                                    </div>
                                 </div>
 
                                 {/* Download Dropdowns */}
@@ -361,6 +595,110 @@ const EmployeeReportPage = () => {
                     {/* Data Dashboard */}
                     {employeeData && (
                         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+
+                            {/* Summary Cards - Grouped */}
+                            <div className="space-y-6">
+                                {/* Top standalone cards */}
+                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 flex items-center gap-4 transition-all hover:shadow-md hover:border-blue-200">
+                                        <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
+                                            <Calendar className="h-6 w-6" />
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-0.5">Total Days</p>
+                                            <p className="text-2xl font-black text-slate-800">{totalDays}</p>
+                                        </div>
+                                    </div>
+                                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 flex items-center gap-4 transition-all hover:shadow-md hover:border-amber-200">
+                                        <div className="p-3 bg-amber-50 text-amber-600 rounded-xl">
+                                            <Calendar className="h-6 w-6" />
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-0.5">Leave Count</p>
+                                            <p className="text-xl font-black text-slate-800">{dayLeavesCount} Day{dayLeavesCount !== 1 ? 's' : ''} / {hourLeavesCount} Hr{hourLeavesCount !== 1 ? 's' : ''}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                    {/* Total Tasks Group */}
+                                    <div className="bg-white rounded-2xl shadow-sm border border-emerald-100 p-6 flex flex-col h-full bg-gradient-to-b from-emerald-50/30 to-white">
+                                        <div className="flex items-center gap-3 mb-5 pb-4 border-b border-emerald-100">
+                                            <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg">
+                                                <CheckSquare className="h-5 w-5" />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-sm font-extrabold text-emerald-900 uppercase tracking-wider">Total Tasks</h3>
+                                                <p className="text-2xl font-black text-emerald-700 leading-none mt-1">{totalTaskCount}</p>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-3 flex-1 mt-auto">
+                                            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-3 text-center transition-all hover:bg-slate-50">
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Main Task</p>
+                                                <p className="text-lg font-bold text-slate-800">{mainTaskCount}</p>
+                                            </div>
+                                            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-3 text-center transition-all hover:bg-slate-50">
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Quick Task</p>
+                                                <p className="text-lg font-bold text-slate-800">{quickTaskCount}</p>
+                                            </div>
+                                            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-3 text-center transition-all hover:bg-slate-50">
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Meetings</p>
+                                                <p className="text-lg font-bold text-slate-800">{meetingsCount}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Working Hours Group */}
+                                    <div className="bg-white rounded-2xl shadow-sm border border-indigo-100 p-6 flex flex-col h-full bg-gradient-to-b from-indigo-50/30 to-white">
+                                        <div className="flex items-center gap-3 mb-5 pb-4 border-b border-indigo-100">
+                                            <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg">
+                                                <Clock className="h-5 w-5" />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-sm font-extrabold text-indigo-900 uppercase tracking-wider">Working Hours</h3>
+                                                <p className="text-xl sm:text-2xl font-black text-indigo-700 leading-none mt-1 whitespace-nowrap">{workingHours}</p>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3 flex-1 mt-auto">
+                                            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-3 text-center transition-all hover:bg-slate-50">
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Active Hours</p>
+                                                <p className="text-sm font-bold text-slate-800">{activeHours}</p>
+                                            </div>
+                                            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-3 text-center transition-all hover:bg-slate-50">
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Idle Hours</p>
+                                                <p className="text-sm font-bold text-slate-800">{idleHours}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Working Hours Breakdown Group */}
+                                    <div className="bg-white rounded-2xl shadow-sm border border-purple-100 p-6 flex flex-col h-full bg-gradient-to-b from-purple-50/30 to-white">
+                                        <div className="flex items-center gap-3 mb-5 pb-4 border-b border-purple-100">
+                                            <div className="p-2 bg-purple-100 text-purple-600 rounded-lg">
+                                                <Briefcase className="h-5 w-5" />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-sm font-extrabold text-purple-900 uppercase tracking-wider">Working Hours</h3>
+                                                <p className="text-xl sm:text-2xl font-black text-purple-900 leading-none mt-1 whitespace-nowrap">{workingHours}</p>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-3 flex-1 mt-auto">
+                                            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-3 text-center transition-all hover:bg-slate-50">
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Main</p>
+                                                <p className="text-xs font-bold text-slate-800">{mainTaskHours}</p>
+                                            </div>
+                                            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-3 text-center transition-all hover:bg-slate-50">
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">QT</p>
+                                                <p className="text-xs font-bold text-slate-800">{qtHours}</p>
+                                            </div>
+                                            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-3 text-center transition-all hover:bg-slate-50">
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Meeting</p>
+                                                <p className="text-xs font-bold text-slate-800">{meetingHours}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
 
                             {/* 1. Profile Card */}
                             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
@@ -396,8 +734,8 @@ const EmployeeReportPage = () => {
                                         Attendance and Working Hours
                                     </h2>
                                     {filteredAttendance && filteredAttendance.length > 0 ? (
-                                        <div className="overflow-x-auto max-h-[500px] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-200">
-                                            <table className="w-full text-left border-collapse min-w-[1000px] table-fixed">
+                                        <div className="w-full overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+                                            <table className="w-full text-left border-collapse min-w-[1000px] xl:min-w-full table-fixed">
                                                 <thead className="sticky top-0 z-10">
                                                     <tr className="bg-gray-50/50 text-left border-b border-gray-200">
                                                         <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[5%] text-center">S.No</th>
@@ -465,8 +803,8 @@ const EmployeeReportPage = () => {
                                         All Assigned Tasks
                                     </h2>
                                     {filteredTasks && filteredTasks.length > 0 ? (
-                                        <div className="overflow-x-auto max-h-[500px] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-200">
-                                            <table className="w-full text-left border-collapse min-w-[1000px] table-fixed">
+                                        <div className="w-full overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+                                            <table className="w-full text-left border-collapse min-w-[1000px] xl:min-w-full table-fixed">
                                                 <thead className="sticky top-0 z-10">
                                                     <tr className="bg-gray-50/50 text-left border-b border-gray-200">
                                                         <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[5%] text-center">S.No</th>
@@ -571,8 +909,8 @@ const EmployeeReportPage = () => {
                                     All Work Logs
                                 </h2>
                                 {filteredLogs && filteredLogs.length > 0 ? (
-                                    <div className="overflow-x-auto max-h-[500px] overflow-y-auto scrollbar-hide">
-                                        <table className="w-full text-left border-collapse min-w-[1000px] table-fixed">
+                                    <div className="w-full overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+                                        <table className="w-full text-left border-collapse min-w-[1200px] xl:min-w-full table-fixed">
                                             <thead className="sticky top-0 z-10">
                                                 <tr className="bg-white text-gray-500 text-xs border-b border-gray-100 uppercase tracking-wider">
                                                     <th className="p-4 font-semibold w-5 text-center text-gray-400">S.No</th>
@@ -588,9 +926,10 @@ const EmployeeReportPage = () => {
                                                 {filteredLogs.map((log, idx) => {
                                                     const displayDuration = log.timeAutomation || log.duration || calculateDurationStr(log.startTime, log.endTime);
                                                     const displayTaskNo = (log.taskNo || log["Task No"] || "0").toString().padStart(2, '0');
-                                                    const taskType = log.taskType || log["Task Type"];
-                                                    const projectName = log.projectName || log["Project Name"];
-                                                    const description = log.description || log["Task Description"];
+                                                    const getVal = (val) => (!val || val === "undefined") ? "--" : val;
+                                                    const taskType = getVal(log.taskType || log["Task Type"]);
+                                                    const projectName = getVal(log.projectName || log["Project Name"]);
+                                                    const description = getVal(log.description || log["Task Description"]);
                                                     const rawDate = log.date || log.Date;
 
                                                     return (
@@ -718,13 +1057,27 @@ const EmployeeReportPage = () => {
                                                             className="block w-full h-full"
                                                         >
                                                             <img
-                                                                src={shot.url.startsWith('http') ? shot.url : `${API_URL.replace('/api', '')}${shot.url}`}
+                                                                src={
+                                                                    (() => {
+                                                                        const parts = shot.url.split('/');
+                                                                        if (parts.length > 4) {
+                                                                            const subPaths = parts.slice(3, -1).map(p => encodeURIComponent(p)).join('/');
+                                                                            return `http://192.168.1.34:5001/files/FdsTaskManager/Screenshots/${subPaths}/${parts[parts.length - 1]}`;
+                                                                        }
+                                                                        return `http://192.168.1.34:5001/files/FdsTaskManager/Screenshots/${parts[parts.length - 1]}`;
+                                                                    })()
+                                                                }
                                                                 alt="Screenshot capture"
                                                                 className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                                                                 onError={(e) => {
-                                                                    e.target.onerror = null;
-                                                                    // Optional fallback if needed, but primarily rely on the active API_URL
-                                                                    e.target.src = `https://task-manager-fox-frontend.onrender.com${shot.url}`;
+                                                                    const dbUrl = shot.url.startsWith('http') ? shot.url : `${API_URL.replace('/api', '')}${shot.url}`;
+                                                                    if (e.target.src !== dbUrl) {
+                                                                        e.target.onerror = null;
+                                                                        e.target.src = dbUrl;
+                                                                    } else {
+                                                                        e.target.onerror = null;
+                                                                        e.target.src = 'https://via.placeholder.com/400x225?text=Image+Not+Found';
+                                                                    }
                                                                 }}
                                                             />
                                                             <div className="absolute inset-0 bg-indigo-900/0 group-hover:bg-indigo-900/10 transition-colors duration-300"></div>

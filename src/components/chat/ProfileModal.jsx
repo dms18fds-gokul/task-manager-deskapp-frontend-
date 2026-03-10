@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, User, Briefcase, FileText } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
-import { API_URL } from '../../config';
+import { API_URL } from '../../utils/config';
 
 export default function ProfileModal({ isOpen, onClose, user, isEditable }) {
     const { user: currentUser } = useAuth(); // To update context if editing self
@@ -26,7 +26,7 @@ export default function ProfileModal({ isOpen, onClose, user, isEditable }) {
         e.preventDefault();
         try {
             const token = localStorage.getItem('token');
-            await axios.put(`${API_URL}/api/auth/profile`, formData, {
+            await axios.put(`${API_URL}/auth/profile`, formData, {
                 headers: { 'x-auth-token': token }
             });
             alert('Profile Updated');

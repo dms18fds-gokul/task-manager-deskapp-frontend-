@@ -208,6 +208,7 @@ const GroupTaskAssignment = () => {
         priority: "Medium",
         startDate: "", // "YYYY-MM-DD"
         startTime: "", // "HH:MM"
+        deadline: "", // "YYYY-MM-DD"
         department: [], // Changed to Array for Multi-select
         teamLead: "", // Selected Team Lead ID
         projectLead: "", // Selected Project Lead ID
@@ -519,6 +520,7 @@ const GroupTaskAssignment = () => {
                     priority: "Medium",
                     startDate: new Date().toISOString().split("T")[0],
                     startTime: new Date().toTimeString().slice(0, 5),
+                    deadline: "",
                     department: [],
                     teamLead: "",
                     projectLead: "",
@@ -598,6 +600,7 @@ const GroupTaskAssignment = () => {
                 priority: "Medium",
                 startDate: new Date().toISOString().split("T")[0],
                 startTime: new Date().toTimeString().slice(0, 5),
+                deadline: "",
                 department: [],
                 teamLead: "",
                 projectLead: "",
@@ -820,7 +823,7 @@ const GroupTaskAssignment = () => {
                                 </div>
 
                                 {/* Priority & Date Section */}
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 w-full pt-6 border-t border-gray-100 mt-8">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 w-full pt-6 border-t border-gray-100 mt-8">
                                     <div className="w-full">
                                         <label className="block text-sm font-semibold text-gray-700 mb-2">Priority</label>
                                         <div className="flex flex-col sm:flex-row gap-2 w-full">
@@ -852,6 +855,12 @@ const GroupTaskAssignment = () => {
                                         <label className="block text-sm font-semibold text-gray-700 mb-2">Start Time (Auto)</label>
                                         <input type="time" name="startTime" value={formData.startTime} onChange={handleChange}
                                             className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed outline-none" readOnly />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Due Date (Optional)</label>
+                                        <input type="date" name="deadline" value={formData.deadline} onChange={handleChange}
+                                            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition bg-white hover:bg-gray-50 focus:bg-white shadow-sm" />
                                     </div>
 
                                 </div>

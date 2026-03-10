@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
-import { API_URL } from '../../config';
+import { API_URL } from '../../utils/config';
 import { Clock, Calendar, ArrowLeft, Download } from 'lucide-react';
 import MediaModal from './MediaModal';
 
@@ -26,7 +26,7 @@ export default function SessionView() {
                 return;
             }
 
-            const res = await axios.get(`${API_URL}/api/messages/session/${channelId}/${startMsgId}/${endMsgId}`, {
+            const res = await axios.get(`${API_URL}/messages/session/${channelId}/${startMsgId}/${endMsgId}`, {
                 headers: { 'x-auth-token': token }
             });
             setMessages(res.data);

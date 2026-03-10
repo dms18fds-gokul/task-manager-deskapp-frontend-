@@ -322,27 +322,48 @@ const CredentialsVault = () => {
     const searchDropdownRef = useRef(null);
 
     // Filter State
-    const [filterType, setFilterType] = useState("All Vaults");
+    const [filterType, setFilterType] = useState("All");
 
     // Admin Dropdown States
-    const [selectedEmployeeName, setSelectedEmployeeName] = useState("All Employees");
-    const [selectedDepartment, setSelectedDepartment] = useState("All Departments");
-    const [selectedEmployeeId, setSelectedEmployeeId] = useState("All IDs");
+    const [selectedEmployeeName, setSelectedEmployeeName] = useState("Employee Name");
+    const [selectedDepartment, setSelectedDepartment] = useState("Department");
+    const [selectedEmployeeId, setSelectedEmployeeId] = useState("Employee ID");
+
+    // Applied Filter States for manual fetch
+    const [appliedFilterType, setAppliedFilterType] = useState("All");
+    const [appliedSelectedEmployeeName, setAppliedSelectedEmployeeName] = useState("Employee Name");
+    const [appliedSelectedDepartment, setAppliedSelectedDepartment] = useState("Department");
+    const [appliedSelectedEmployeeId, setAppliedSelectedEmployeeId] = useState("Employee ID");
+    const [appliedSearchTerm, setAppliedSearchTerm] = useState("");
 
     // Filtered search results
     const [searchResults, setSearchResults] = useState([]);
 
     // Derived unique options for admin dropdowns
-    const employeeNames = ["All Employees", ...new Set(savedCredentials.map(c => c.createdBy?.name).filter(Boolean))];
-    const departments = ["All Departments", ...new Set(savedCredentials.map(c => c.createdBy?.role?.[0]).filter(Boolean))];
-    const employeeIds = ["All IDs", ...new Set(savedCredentials.map(c => c.createdBy?.employeeId).filter(Boolean))];
+    const employeeNames = ["Employee Name", ...new Set(savedCredentials.map(c => c.createdBy?.name).filter(Boolean))];
+    const departments = ["Department", ...new Set(savedCredentials.map(c => c.createdBy?.role?.[0]).filter(Boolean))];
+    const employeeIds = ["Employee ID", ...new Set(savedCredentials.map(c => c.createdBy?.employeeId).filter(Boolean))];
 
     const resetFilters = () => {
-        setFilterType("All Vaults");
-        setSelectedEmployeeName("All Employees");
-        setSelectedDepartment("All Departments");
-        setSelectedEmployeeId("All IDs");
+        setFilterType("All");
+        setSelectedEmployeeName("Employee Name");
+        setSelectedDepartment("Department");
+        setSelectedEmployeeId("Employee ID");
         setSearchTerm("");
+
+        setAppliedFilterType("All");
+        setAppliedSelectedEmployeeName("Employee Name");
+        setAppliedSelectedDepartment("Department");
+        setAppliedSelectedEmployeeId("Employee ID");
+        setAppliedSearchTerm("");
+    };
+
+    const handleApplyFilters = () => {
+        setAppliedFilterType(filterType);
+        setAppliedSelectedEmployeeName(selectedEmployeeName);
+        setAppliedSelectedDepartment(selectedDepartment);
+        setAppliedSelectedEmployeeId(selectedEmployeeId);
+        setAppliedSearchTerm(searchTerm);
     };
 
     // Document click for closing search dropdown
@@ -358,12 +379,12 @@ const CredentialsVault = () => {
 
     // Effect to handle searching
     useEffect(() => {
-        if (!searchTerm.trim()) {
+        if (!appliedSearchTerm.trim()) {
             setSearchResults([]);
             return;
         }
 
-        const lowerTerm = searchTerm.toLowerCase();
+        const lowerTerm = appliedSearchTerm.toLowerCase();
         const results = [];
 
         savedCredentials.forEach(cred => {
@@ -399,7 +420,7 @@ const CredentialsVault = () => {
 
         // Deduplicate or limit if needed, for now just show all matches
         setSearchResults(results);
-    }, [searchTerm, savedCredentials]);
+    }, [appliedSearchTerm, savedCredentials]);
 
     // Password Reveal State
     const [revealedPasswords, setRevealedPasswords] = useState({}); // { [credentialId_itemIdx]: true }
@@ -572,7 +593,7 @@ const CredentialsVault = () => {
     const isAdmin = user.role === "Super Admin" || (Array.isArray(user.role) && user.role.includes("Super Admin"));
 
     return (
-        <div className="flex min-h-screen bg-gray-100 font-sans relative overflow-hidden">
+        <div className="flex h-screen overflow-hidden bg-gray-100 font-sans relative">
             {/* Desktop Sidebar */}
             {isAdmin ? (
                 <Sidebar className="hidden md:flex" />
@@ -628,7 +649,7 @@ const CredentialsVault = () => {
                     </div>
 
                     {/* Filter Navbar */}
-                    <div className="mb-6 bg-white p-3 rounded-xl border border-gray-200 shadow-sm flex flex-col xl:flex-row items-center gap-4">
+                    <div className="mb-6 bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-col xl:flex-row items-center gap-4">
 
                         <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto">
                             {isAdmin && (
@@ -637,13 +658,13 @@ const CredentialsVault = () => {
                                         <select
                                             value={selectedEmployeeName}
                                             onChange={(e) => setSelectedEmployeeName(e.target.value)}
-                                            className="appearance-none w-40 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer shadow-sm"
+                                            className="appearance-none w-40 px-4 py-2.5 bg-gray-50/50 hover:bg-white border border-gray-200 rounded-lg text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer transition-all shadow-sm"
                                         >
                                             {employeeNames.map(name => (
                                                 <option key={name} value={name}>{name}</option>
                                             ))}
                                         </select>
-                                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+                                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
                                             <FaChevronDown size={12} />
                                         </div>
                                     </div>
@@ -652,13 +673,13 @@ const CredentialsVault = () => {
                                         <select
                                             value={selectedDepartment}
                                             onChange={(e) => setSelectedDepartment(e.target.value)}
-                                            className="appearance-none w-44 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer shadow-sm"
+                                            className="appearance-none w-40 px-4 py-2.5 bg-gray-50/50 hover:bg-white border border-gray-200 rounded-lg text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer transition-all shadow-sm"
                                         >
                                             {departments.map(dept => (
                                                 <option key={dept} value={dept}>{dept}</option>
                                             ))}
                                         </select>
-                                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+                                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
                                             <FaChevronDown size={12} />
                                         </div>
                                     </div>
@@ -667,13 +688,13 @@ const CredentialsVault = () => {
                                         <select
                                             value={selectedEmployeeId}
                                             onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                                            className="appearance-none w-36 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer shadow-sm"
+                                            className="appearance-none w-36 px-4 py-2.5 bg-gray-50/50 hover:bg-white border border-gray-200 rounded-lg text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer transition-all shadow-sm"
                                         >
                                             {employeeIds.map(id => (
                                                 <option key={id} value={id}>{id}</option>
                                             ))}
                                         </select>
-                                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+                                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
                                             <FaChevronDown size={12} />
                                         </div>
                                     </div>
@@ -685,13 +706,13 @@ const CredentialsVault = () => {
                                 <select
                                     value={filterType}
                                     onChange={(e) => setFilterType(e.target.value)}
-                                    className="appearance-none w-40 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer shadow-sm"
+                                    className="appearance-none w-40 px-4 py-2.5 bg-gray-50/50 hover:bg-white border border-gray-200 rounded-lg text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer transition-all shadow-sm"
                                 >
-                                    <option value="All Vaults">All Vaults</option>
+                                    <option value="All">All Vaults</option>
                                     <option value="User Vault">User Vault</option>
-                                    <option value="Service">Service</option>
+                                    <option value="Service">Service Vault</option>
                                 </select>
-                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
                                     <FaChevronDown size={12} />
                                 </div>
                             </div>
@@ -699,79 +720,23 @@ const CredentialsVault = () => {
 
                         {/* Search and Reset Actions */}
                         <div className="flex items-center gap-3 w-full xl:w-auto xl:ml-auto">
-                            {/* Search Bar with Dropdown Container */}
-                            <div className="relative flex-1 xl:w-80" ref={searchDropdownRef}>
+                            {/* Search Bar Container */}
+                            <div className="relative flex-1 xl:w-80">
                                 <div className="relative w-full">
-                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                                         <FaSearch className="text-gray-400" size={14} />
                                     </div>
                                     <input
                                         type="text"
                                         placeholder="Search values..."
                                         value={searchTerm}
-                                        onChange={(e) => {
-                                            setSearchTerm(e.target.value);
-                                            setIsSearchDropdownOpen(true);
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') handleApplyFilters();
                                         }}
-                                        onFocus={() => {
-                                            if (searchTerm.trim()) setIsSearchDropdownOpen(true);
-                                        }}
-                                        className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-white transition-all shadow-sm"
+                                        className="w-full pl-10 pr-4 py-2.5 bg-gray-50/50 hover:bg-white border border-gray-200 rounded-lg text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
                                     />
                                 </div>
-
-                                {/* Search Dropdown */}
-                                {isSearchDropdownOpen && searchTerm.trim() && (
-                                    <div className="absolute z-[60] mt-2 w-full left-0 bg-white rounded-xl shadow-xl border border-gray-100 max-h-44 overflow-y-auto scrollbar-hide animate-fade-in-up">
-                                        {searchResults.length > 0 ? (
-                                            <div className="py-2">
-                                                <div className="px-4 py-2 bg-gray-50/50 border-b border-gray-100 flex justify-between items-center sticky top-0 z-10 backdrop-blur-sm">
-                                                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Search Results</span>
-                                                    <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">{searchResults.length}</span>
-                                                </div>
-                                                <ul className="divide-y divide-gray-100 list-none m-0 p-0">
-                                                    {searchResults.map((result, idx) => (
-                                                        <li
-                                                            key={`${result.credentialId}_${idx}`}
-                                                            className="p-4 hover:bg-gray-50 transition-colors cursor-pointer group m-0 flex flex-col gap-2"
-                                                            onClick={() => {
-                                                                const cred = savedCredentials.find(c => c._id === result.credentialId);
-                                                                if (cred) {
-                                                                    setSelectedCredential(cred);
-                                                                    setRevealedPasswords({});
-                                                                    setIsSearchDropdownOpen(false);
-                                                                }
-                                                            }}
-                                                        >
-                                                            <div className="flex items-start justify-between gap-2">
-                                                                <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider truncate flex-1">{result.credentialTitle}</span>
-                                                                {result.vaultType && (
-                                                                    <span className={`text-[9px] font-bold uppercase tracking-wide rounded border px-1.5 py-0.5 flex-shrink-0
-                                                                        ${result.vaultType === 'Service' ? 'text-indigo-600 bg-indigo-50 border-indigo-100' : 'text-emerald-600 bg-emerald-50 border-emerald-100'}
-                                                                    `}>
-                                                                        {result.vaultType}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 shadow-sm group-hover:bg-white group-hover:border-indigo-200 group-hover:shadow-md transition-all">
-                                                                <p className="text-[10px] text-gray-500 font-bold mb-1 uppercase tracking-wider">{result.key}</p>
-                                                                <p className="text-sm font-medium text-gray-900 break-all">{result.value}</p>
-                                                            </div>
-                                                        </li>
-                                                    ))}
-                                                </ul>
-                                            </div>
-                                        ) : (
-                                            <div className="p-6 text-center text-gray-500">
-                                                <div className="mx-auto w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mb-3">
-                                                    <FaSearch className="text-gray-300" size={20} />
-                                                </div>
-                                                <p className="text-sm font-semibold text-gray-700">No matches found</p>
-                                                <p className="text-[11px] font-medium text-gray-400 mt-1 uppercase tracking-wider">Passwords are excluded</p>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
                             </div>
 
                             {/* Reset Button */}
@@ -781,6 +746,15 @@ const CredentialsVault = () => {
                                 title="Reset Filters"
                             >
                                 <FaSync size={14} />
+                            </button>
+                            {/* Fetch Data Button */}
+                            <button
+                                onClick={handleApplyFilters}
+                                className="h-10 px-5 flex-shrink-0 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-sm font-bold transition-all shadow-sm active:scale-95 flex items-center justify-center gap-2"
+                                title="Fetch Data"
+                            >
+                                <FaSearch className="w-3.5 h-3.5" />
+                                Fetch Data
                             </button>
                         </div>
                     </div>
@@ -800,15 +774,36 @@ const CredentialsVault = () => {
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-8">
                             {savedCredentials
-                                .filter(cred => filterType === "All Vaults" || cred.vaultType === filterType)
+                                .filter(cred => appliedFilterType === "All" || cred.vaultType === appliedFilterType)
                                 .filter(cred => {
                                     if (!isAdmin) return true;
 
-                                    const matchName = selectedEmployeeName === "All Employees" || cred.createdBy?.name === selectedEmployeeName;
-                                    const matchDept = selectedDepartment === "All Departments" || cred.createdBy?.role?.[0] === selectedDepartment;
-                                    const matchId = selectedEmployeeId === "All IDs" || cred.createdBy?.employeeId === selectedEmployeeId;
+                                    const matchName = appliedSelectedEmployeeName === "Employee Name" || cred.createdBy?.name === appliedSelectedEmployeeName;
+                                    const matchDept = appliedSelectedDepartment === "Department" || cred.createdBy?.role?.[0] === appliedSelectedDepartment;
+                                    const matchId = appliedSelectedEmployeeId === "Employee ID" || cred.createdBy?.employeeId === appliedSelectedEmployeeId;
 
                                     return matchName && matchDept && matchId;
+                                })
+                                .filter(cred => {
+                                    if (!appliedSearchTerm || !appliedSearchTerm.trim()) return true;
+
+                                    const lowerTerm = appliedSearchTerm.toLowerCase();
+
+                                    // Search in the title
+                                    if (cred.title && cred.title.toLowerCase().includes(lowerTerm)) return true;
+
+                                    const itemsToDisplay = cred.items && cred.items.length > 0
+                                        ? cred.items
+                                        : [{ key: cred.title, value: cred.value }];
+
+                                    // Search in items (excluding passwords)
+                                    return itemsToDisplay.some(item => {
+                                        if (item.key && item.key.toLowerCase() !== "password") {
+                                            if (item.value && item.value.toLowerCase().includes(lowerTerm)) return true;
+                                            if (item.key && item.key.toLowerCase().includes(lowerTerm)) return true;
+                                        }
+                                        return false;
+                                    });
                                 })
                                 .map((cred) => (
                                     <CredentialCard
@@ -823,15 +818,34 @@ const CredentialsVault = () => {
                                     />
                                 ))}
                             {savedCredentials
-                                .filter(cred => filterType === "All Vaults" || cred.vaultType === filterType)
+                                .filter(cred => appliedFilterType === "All" || cred.vaultType === appliedFilterType)
                                 .filter(cred => {
                                     if (!isAdmin) return true;
 
-                                    const matchName = selectedEmployeeName === "All Employees" || cred.createdBy?.name === selectedEmployeeName;
-                                    const matchDept = selectedDepartment === "All Departments" || cred.createdBy?.role?.[0] === selectedDepartment;
-                                    const matchId = selectedEmployeeId === "All IDs" || cred.createdBy?.employeeId === selectedEmployeeId;
+                                    const matchName = appliedSelectedEmployeeName === "Employee Name" || cred.createdBy?.name === appliedSelectedEmployeeName;
+                                    const matchDept = appliedSelectedDepartment === "Department" || cred.createdBy?.role?.[0] === appliedSelectedDepartment;
+                                    const matchId = appliedSelectedEmployeeId === "Employee ID" || cred.createdBy?.employeeId === appliedSelectedEmployeeId;
 
                                     return matchName && matchDept && matchId;
+                                })
+                                .filter(cred => {
+                                    if (!appliedSearchTerm || !appliedSearchTerm.trim()) return true;
+
+                                    const lowerTerm = appliedSearchTerm.toLowerCase();
+
+                                    if (cred.title && cred.title.toLowerCase().includes(lowerTerm)) return true;
+
+                                    const itemsToDisplay = cred.items && cred.items.length > 0
+                                        ? cred.items
+                                        : [{ key: cred.title, value: cred.value }];
+
+                                    return itemsToDisplay.some(item => {
+                                        if (item.key && item.key.toLowerCase() !== "password") {
+                                            if (item.value && item.value.toLowerCase().includes(lowerTerm)) return true;
+                                            if (item.key && item.key.toLowerCase().includes(lowerTerm)) return true;
+                                        }
+                                        return false;
+                                    });
                                 }).length === 0 && (
                                     <div className="col-span-full bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center text-gray-500">
                                         <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-50 text-gray-400 mb-4">

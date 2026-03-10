@@ -24,14 +24,36 @@ const Sidebar = ({ className = "" }) => {
     );
     const [isChatOpen, setIsChatOpen] = useState(false); // Chat State
 
+    const [pendingDocCount, setPendingDocCount] = useState(0);
+
+    React.useEffect(() => {
+        const fetchPendingRequests = async () => {
+            try {
+                const token = localStorage.getItem("token");
+                if (!token) return;
+                const res = await axios.get(`${API_URL}/download-requests`, {
+                    headers: { "x-auth-token": token }
+                });
+                const pendingCount = res.data.filter(req => req.status === "Pending").length;
+                setPendingDocCount(pendingCount);
+            } catch (error) {
+                console.error("Error fetching download requests for sidebar:", error);
+            }
+        };
+
+        fetchPendingRequests();
+    }, [location.pathname]); // Refetch when route changes mildly or could set interval instead
+
     const menuItems = [
         { name: "Dashboard", path: "/dashboard", active: location.pathname === "/dashboard" },
-        { name: "Task Assignment", path: "/task-assignment", active: location.pathname === "/task-assignment" },
+        { name: "Assign Task", path: "/assign-task", icon: <FaTasks />, active: location.pathname === "/assign-task" },
         { name: "Tasks", path: "/admin-tasks", active: location.pathname === "/admin-tasks" },
+        { name: "Documents Approval", path: "/admin/documents-approval", active: location.pathname === "/admin/documents-approval" },
         { name: "Work Logs & QT", path: "/employee-log-time", active: location.pathname === "/employee-log-time" },
         { name: "Credentials Vault", path: "/credentials-vault", active: location.pathname === "/credentials-vault" },
         { name: "RAM and Usage", path: "/admin/ram-usage", active: location.pathname === "/admin/ram-usage" },
         { name: "Device and RAM", path: "/admin/device-ram", active: location.pathname === "/admin/device-ram" },
+        { name: "Discussion Notepad", path: "/discussion-notepad", active: location.pathname === "/discussion-notepad" },
     ];
 
     const employeeSubItems = [
@@ -60,7 +82,12 @@ const Sidebar = ({ className = "" }) => {
                             : "text-slate-400 hover:bg-slate-800 hover:text-white"
                             }`}
                     >
-                        {item.name}
+                        <span className="flex-1 text-left">{item.name}</span>
+                        {item.name === "Documents Approval" && pendingDocCount > 0 && (
+                            <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full ml-2">
+                                {pendingDocCount}
+                            </span>
+                        )}
                     </Link>
                 ))}
 
@@ -210,6 +237,7 @@ const Sidebar = ({ className = "" }) => {
                             >
                                 Screenshot Control
                             </Link>
+
                         </div>
                     )}
                 </div>

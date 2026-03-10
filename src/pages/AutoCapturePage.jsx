@@ -11,9 +11,26 @@ const AutoCapturePage = () => {
     const [selectedImage, setSelectedImage] = useState(null);
     const [selectedDevice, setSelectedDevice] = useState(null);
 
+    const [failedImages, setFailedImages] = useState({});
+
+    // Filter State
+    const [filters, setFilters] = useState({
+        dateFilter: "Today",
+        fromDate: "",
+        toDate: "",
+        time: ""
+    });
+
+    const [appliedFilters, setAppliedFilters] = useState({
+        dateFilter: "Today",
+        fromDate: "",
+        toDate: "",
+        time: ""
+    });
+
     useEffect(() => {
         fetchScreenshots();
-    }, []);
+    }, [appliedFilters, selectedDevice]);
 
     const fetchScreenshots = async (isRefresh = false) => {
         if (isRefresh) setRefreshing(true);
@@ -21,12 +38,20 @@ const AutoCapturePage = () => {
 
         try {
             const token = localStorage.getItem('token');
-            const response = await axios.get(`${API_URL}/sessions/all-screenshots`, {
+            // Only apply the extensive date/time filters if we are viewing a specific device.
+            // When viewing the global overview, we want to see the latest for ALL devices regardless of these UI filters.
+            let queryParams = "";
+            if (selectedDevice) {
+                queryParams = `?${new URLSearchParams(appliedFilters).toString()}&deviceSerial=${selectedDevice}`;
+            }
+
+            const response = await axios.get(`${API_URL}/sessions/all-screenshots${queryParams}`, {
                 headers: {
                     Authorization: `Bearer ${token}`
                 }
             });
             setScreenshots(response.data);
+            setFailedImages({}); // Reset fallback state on new fetch
         } catch (error) {
             console.error("Error fetching screenshots", error);
         } finally {
@@ -54,9 +79,12 @@ const AutoCapturePage = () => {
     const latestDeviceShots = Array.from(groupedDevices.values());
 
     // Filtered specific view
+    // Since the backend handles the filtering, we just map them when viewing a specific device
     const specificDeviceShots = selectedDevice
         ? screenshots.filter(shot => shot.deviceSerial === selectedDevice)
         : [];
+
+    const deviceEmployeeInfo = specificDeviceShots.find(shot => shot.employeeName || shot.employeeId) || {};
 
     return (
         <div className="flex h-screen bg-slate-50">
@@ -68,17 +96,127 @@ const AutoCapturePage = () => {
                     <div className="flex justify-between items-center mb-8">
                         <div>
                             {selectedDevice ? (
-                                <div className="flex items-center space-x-3">
+                                <div className="flex items-start space-x-4">
                                     <button
                                         onClick={() => setSelectedDevice(null)}
-                                        className="text-slate-500 hover:text-indigo-600 transition-colors p-2 rounded-full hover:bg-slate-200"
+                                        className="text-slate-500 hover:text-indigo-600 transition-colors p-2.5 rounded-full hover:bg-slate-200 mt-1"
                                         title="Back to Devices"
                                     >
                                         <FaArrowLeft size={20} />
                                     </button>
-                                    <div>
-                                        <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Device Details</h1>
-                                        <p className="mt-1 text-sm text-slate-500 font-mono">{selectedDevice}</p>
+                                    <div className="flex flex-col">
+                                        <h1 className="text-3xl font-bold text-slate-900 tracking-tight mb-5">Device Details</h1>
+
+                                        <div className="flex flex-wrap items-center gap-4">
+                                            {deviceEmployeeInfo.employeeName && (
+                                                <div className="flex items-center text-[1.05rem] font-bold text-slate-800 tracking-wide uppercase">
+                                                    <div className="flex items-center justify-center bg-indigo-100 text-indigo-600 rounded-full p-1.5 mr-2">
+                                                        <FaUser size={14} />
+                                                    </div>
+                                                    {deviceEmployeeInfo.employeeName}
+                                                </div>
+                                            )}
+
+                                            {deviceEmployeeInfo.employeeId && (
+                                                <div className="flex items-center bg-white border border-slate-200 shadow-sm rounded-lg px-3 py-2 w-fit text-sm text-slate-700 font-medium">
+                                                    <span className="text-slate-500 mr-2 flex items-center"><FaUser className="mr-1.5 text-slate-400" size={12} /> Emp ID:</span>
+                                                    <span className="font-semibold text-slate-800">{deviceEmployeeInfo.employeeId}</span>
+                                                </div>
+                                            )}
+
+                                            <div className="flex items-center bg-white border border-slate-200 shadow-sm rounded-lg px-3 py-2 w-fit text-sm text-slate-700 font-medium">
+                                                <span className="text-slate-500 mr-2 flex items-center"><FaDesktop className="mr-1.5 text-slate-400" size={12} /> Device ID:</span>
+                                                <span className="font-mono font-semibold text-slate-800 tracking-tight">{selectedDevice}</span>
+                                            </div>
+                                        </div>
+
+                                        {/* Filter Navbar for Specific Device View */}
+                                        <div className="mt-8 bg-white border border-slate-200 rounded-xl shadow-sm p-4 w-full">
+                                            <div className="flex flex-wrap items-end gap-5">
+
+                                                {/* Date Filter Selection */}
+                                                <div className="flex flex-col min-w-[200px]">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center">
+                                                        <FaClock className="mr-1.5 text-slate-400" /> Date Range
+                                                    </label>
+                                                    <select
+                                                        value={filters.dateFilter}
+                                                        onChange={(e) => setFilters({ ...filters, dateFilter: e.target.value })}
+                                                        className="h-[42px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 font-medium focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all cursor-pointer"
+                                                    >
+                                                        <option value="Today">Today</option>
+                                                        <option value="Particular Date">Particular Date</option>
+                                                        <option value="From Date and To Date">From Date and To Date</option>
+                                                        <option value="Last 7 Days">Last 7 Days</option>
+                                                        <option value="Last 30 Days">Last 30 Days</option>
+                                                    </select>
+                                                </div>
+
+                                                {/* Conditional Date Inputs */}
+                                                {(filters.dateFilter === 'Particular Date' || filters.dateFilter === 'From Date and To Date') && (
+                                                    <div className="flex flex-col min-w-[150px]">
+                                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                                                            {filters.dateFilter === 'Particular Date' ? 'Select Date' : 'From Date'}
+                                                        </label>
+                                                        <input
+                                                            type="date"
+                                                            value={filters.fromDate}
+                                                            onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })}
+                                                            className="h-[42px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 font-medium focus:ring-2 focus:ring-indigo-500 outline-none w-full"
+                                                        />
+                                                    </div>
+                                                )}
+
+                                                {filters.dateFilter === 'From Date and To Date' && (
+                                                    <div className="flex flex-col min-w-[150px]">
+                                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">To Date</label>
+                                                        <input
+                                                            type="date"
+                                                            value={filters.toDate}
+                                                            onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
+                                                            className="h-[42px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 font-medium focus:ring-2 focus:ring-indigo-500 outline-none w-full"
+                                                        />
+                                                    </div>
+                                                )}
+
+                                                {/* Exact Time Input */}
+                                                <div className="flex flex-col min-w-[150px]">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center">
+                                                        Time
+                                                    </label>
+                                                    <input
+                                                        type="time"
+                                                        step="60"
+                                                        value={filters.time}
+                                                        onChange={(e) => setFilters({ ...filters, time: e.target.value })}
+                                                        className="h-[42px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 font-medium focus:ring-2 focus:ring-indigo-500 outline-none w-full"
+                                                    />
+                                                </div>
+
+                                                {/* Action Buttons */}
+                                                <div className="flex items-center gap-2 ml-auto">
+                                                    <button
+                                                        onClick={() => {
+                                                            const reset = { dateFilter: "Today", fromDate: "", toDate: "", time: "" };
+                                                            setFilters(reset);
+                                                            setAppliedFilters(reset);
+                                                        }}
+                                                        className="h-[42px] px-4 flex items-center justify-center bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 rounded-lg font-bold text-sm transition-colors"
+                                                        title="Reset Filters"
+                                                    >
+                                                        <FaSync className="text-sm" />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setAppliedFilters({ ...filters })}
+                                                        disabled={loading}
+                                                        className="h-[42px] px-6 flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-sm shadow-sm transition-colors disabled:opacity-75"
+                                                    >
+                                                        Fetch Data
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+
                                     </div>
                                 </div>
                             ) : (
@@ -116,12 +254,30 @@ const AutoCapturePage = () => {
                                 <div key={shot._id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-shadow duration-300 flex flex-col">
                                     <div className="relative aspect-video group cursor-pointer bg-slate-900" onClick={() => setSelectedImage(`${baseUrl}${shot.url}`)}>
                                         <img
-                                            src={`${baseUrl}${shot.url}`}
+                                            src={
+                                                (() => {
+                                                    const parts = shot.url.split('/');
+                                                    if (parts.length > 4) {
+                                                        const subPaths = parts.slice(3, -1).map(p => encodeURIComponent(p)).join('/');
+                                                        return `http://192.168.1.34:5001/files/FdsTaskManager/Screenshots/${subPaths}/${parts[parts.length - 1]}`;
+                                                    }
+                                                    return `http://192.168.1.34:5001/files/FdsTaskManager/Screenshots/${parts[parts.length - 1]}`;
+                                                })()
+                                            }
                                             alt="Screenshot"
                                             className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity"
                                             onError={(e) => {
-                                                e.target.onerror = null;
-                                                e.target.src = 'https://via.placeholder.com/400x225?text=Image+Not+Found';
+                                                const dbUrl = `${baseUrl}${shot.url}`;
+                                                if (e.target.src !== dbUrl) {
+                                                    // Fallback 1: Database Cloud URL
+                                                    e.target.onerror = null;
+                                                    e.target.src = dbUrl;
+                                                    setFailedImages(prev => ({ ...prev, [shot._id]: true }));
+                                                } else {
+                                                    // Fallback 2: Not found placeholder
+                                                    e.target.onerror = null;
+                                                    e.target.src = 'https://via.placeholder.com/400x225?text=Image+Not+Found';
+                                                }
                                             }}
                                         />
                                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
@@ -134,27 +290,15 @@ const AutoCapturePage = () => {
                                                 Pre-Login
                                             </div>
                                         )}
+                                        <div className={`absolute bottom-3 right-3 text-white text-[10px] uppercase font-bold px-2 py-0.5 rounded shadow-sm backdrop-blur ${failedImages[shot._id] ? 'bg-blue-600/90' : 'bg-emerald-600/90'}`}>
+                                            {failedImages[shot._id] ? 'Cloud DB' : 'LAN'}
+                                        </div>
                                     </div>
 
-                                    <div className="p-4 flex flex-col flex-1">
-                                        <div className="flex items-center space-x-2 text-sm font-medium text-slate-900 mb-2">
-                                            <FaUser className={shot.employeeId ? "text-indigo-500" : "text-amber-500"} size={14} />
-                                            <span className="truncate">
-                                                {shot.employeeName || "Anonymous User"}
-                                            </span>
-                                        </div>
-
-                                        <div className="space-y-1 mt-auto">
-                                            {shot.employeeId && (
-                                                <div className="flex items-center text-xs text-slate-500">
-                                                    <span className="w-16 font-medium">Emp ID:</span>
-                                                    <span className="truncate flex-1">{shot.employeeId}</span>
-                                                </div>
-                                            )}
-                                            <div className="flex items-center text-xs text-slate-500 pt-2 border-t border-slate-100 mt-2">
-                                                <FaClock className="mr-1.5" size={12} />
-                                                {formatDate(shot.timestamp)}
-                                            </div>
+                                    <div className="p-3 bg-slate-50 flex items-center justify-center border-t border-slate-100">
+                                        <div className="flex items-center text-sm text-slate-600 font-medium">
+                                            <FaClock className="mr-2 text-slate-400" size={14} />
+                                            {formatDate(shot.timestamp)}
                                         </div>
                                     </div>
                                 </div>
@@ -173,16 +317,37 @@ const AutoCapturePage = () => {
                                         <div className="absolute inset-0 bg-slate-900 p-2 z-10 flex justify-end items-end opacity-0 hover:opacity-100 transition-opacity bg-gradient-to-t from-slate-900/60 to-transparent">
                                         </div>
                                         <img
-                                            src={`${baseUrl}${shot.url}`}
+                                            src={
+                                                (() => {
+                                                    const parts = shot.url.split('/');
+                                                    if (parts.length > 4) {
+                                                        const subPaths = parts.slice(3, -1).map(p => encodeURIComponent(p)).join('/');
+                                                        return `http://192.168.1.34:5001/files/FdsTaskManager/Screenshots/${subPaths}/${parts[parts.length - 1]}`;
+                                                    }
+                                                    return `http://192.168.1.34:5001/files/FdsTaskManager/Screenshots/${parts[parts.length - 1]}`;
+                                                })()
+                                            }
                                             alt="Latest Screenshot"
                                             className="w-full h-full object-cover opacity-80 hover:opacity-100 transition-opacity blur-[1px] hover:blur-none"
                                             onError={(e) => {
-                                                e.target.onerror = null;
-                                                e.target.src = 'https://via.placeholder.com/400x225?text=Image+Not+Found';
+                                                const dbUrl = `${baseUrl}${shot.url}`;
+                                                if (e.target.src !== dbUrl) {
+                                                    // Fallback 1: Database Cloud URL
+                                                    e.target.onerror = null;
+                                                    e.target.src = dbUrl;
+                                                    setFailedImages(prev => ({ ...prev, [shot._id]: true }));
+                                                } else {
+                                                    // Fallback 2: Not found placeholder
+                                                    e.target.onerror = null;
+                                                    e.target.src = 'https://via.placeholder.com/400x225?text=Image+Not+Found';
+                                                }
                                             }}
                                         />
-                                        <div className="absolute top-3 right-3 bg-indigo-600/90 backdrop-blur text-white text-xs font-bold px-2 py-1 rounded shadow-sm flex items-center shadow-lg">
+                                        <div className="absolute top-3 right-3 bg-indigo-600/90 backdrop-blur text-white text-[10px] uppercase font-bold px-2 py-1 rounded shadow-sm flex items-center shadow-lg">
                                             View All
+                                        </div>
+                                        <div className={`absolute bottom-3 right-3 text-white text-[10px] uppercase font-bold px-2 py-0.5 rounded shadow-sm backdrop-blur z-20 ${failedImages[shot._id] ? 'bg-blue-600/90' : 'bg-emerald-600/90'}`}>
+                                            {failedImages[shot._id] ? 'Cloud DB' : 'LAN'}
                                         </div>
                                     </div>
 
