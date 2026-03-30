@@ -23,14 +23,18 @@ const Auth = () => {
   const navigate = useNavigate();
   const { login } = useAuth();
 
+  const [showSessionConfirm, setShowSessionConfirm] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
     if (error) setError(""); // Clear error when user types
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (e, forceLogout = false) => {
+    if (e) e.preventDefault();
     setError(""); // Clear previous errors
+    setIsSubmitting(true);
 
     let deviceId = "UNKNOWN_DEVICE";
     try {
@@ -48,7 +52,6 @@ const Auth = () => {
         }
       }
     } catch (err) {
-      console.warn("Could not fetch hardware ID", err);
     }
 
     // Direct app clients to the secure device-bound API
@@ -65,14 +68,22 @@ const Auth = () => {
           role,
           email: form.email,
           password: form.password,
-          deviceId // Injected for device binding requirements
+          deviceId,
+          confirmLogout: forceLogout
         }),
       });
 
       const data = await res.json();
 
+      if (res.status === 409) {
+        setShowSessionConfirm(true);
+        setIsSubmitting(false);
+        return;
+      }
+
       if (!res.ok) {
         setError(data.message || "Invalid email and password");
+        setIsSubmitting(false);
         return;
       }
 
@@ -81,11 +92,13 @@ const Auth = () => {
 
         if (role === "Super Admin" && !isSuperAdmin) {
           setError("Invalid email and password");
+          setIsSubmitting(false);
           return;
         }
 
         if (role === "Employee" && isSuperAdmin) {
           setError("Invalid email and password");
+          setIsSubmitting(false);
           return;
         }
 
@@ -95,18 +108,49 @@ const Auth = () => {
 
         login(data.user, data.token);
       } else {
-        alert("Signup successful! Please login."); // Keep alert for success or change to toast? User only mentioned Login errors.
+        alert("Signup successful! Please login.");
         setMode("login");
       }
 
     } catch (error) {
-      console.error("API Error:", error);
       setError("Server not responding");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 to-white px-4">
+      {/* Session Confirmation Modal */}
+      {showSessionConfirm && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-md animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-sm w-full text-center animate-zoom-in">
+            <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-6">
+              <span className="text-3xl">⚠️</span>
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Active Session Detected</h3>
+            <p className="text-slate-500 text-sm mb-8 leading-relaxed">
+              Your account is already logged in on another device. <br/>
+              <b>Do you want to log out the old device?</b>
+            </p>
+            <div className="flex flex-col gap-3">
+              <button 
+                onClick={() => handleSubmit(null, true)}
+                className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all active:scale-95 shadow-lg shadow-indigo-100"
+              >
+                Yes, Logout Other Device
+              </button>
+              <button 
+                onClick={() => setShowSessionConfirm(false)}
+                className="w-full h-12 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl font-bold transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="w-full max-w-md bg-white rounded-2xl shadow-lg p-8">
         {/* Title */}
         <h2 className="text-2xl font-bold text-center text-gray-800">
@@ -186,9 +230,12 @@ const Auth = () => {
 
           <button
             type="submit"
-            className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 transition"
+            disabled={isSubmitting}
+            className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            {mode === "login" ? "Sign In" : "Sign Up"}
+            {isSubmitting ? (
+              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : mode === "login" ? "Sign In" : "Sign Up"}
           </button>
         </form>
 

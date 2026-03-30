@@ -8,14 +8,18 @@ const getCurrentTime = () => {
     const now = new Date();
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
-    const seconds = String(now.getSeconds()).padStart(2, '0');
-    return `${hours}:${minutes}:${seconds}`;
+    return `${hours}:${minutes}`;
 };
 
-const QuickTaskForm = ({ user, onClose, onSuccess, editLog }) => {
+const QuickTaskForm = ({ user, onClose, onSuccess, editLog, initialIsMeeting = false }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
+    const canAddOptions = !!user; // All authenticated users can add (private to themselves)
+
+    // Debugging (Remove in production)
+
 
     useEffect(() => {
         const handleOnline = () => setIsOffline(false);
@@ -50,14 +54,14 @@ const QuickTaskForm = ({ user, onClose, onSuccess, editLog }) => {
         return () => clearInterval(timer);
     }, [showSuccess]);
 
-    const [isMeeting, setIsMeeting] = useState(false);
+    const [isMeeting, setIsMeeting] = useState(initialIsMeeting);
 
     const defaultFormData = {
         date: editLog ? editLog.date : new Date().toISOString().split('T')[0],
         taskNo: editLog ? editLog.taskNo : "Auto",
         projectName: editLog ? (Array.isArray(editLog.projectName) ? editLog.projectName : (editLog.projectName ? editLog.projectName.split(',').map(s => s.trim()) : [])) : [],
-        startTime: editLog ? editLog.startTime : getCurrentTime(),
-        endTime: editLog ? editLog.endTime : getCurrentTime(),
+        startTime: editLog ? editLog.startTime : (isMeeting ? getCurrentTime() : getCurrentTime()), // Keep start time auto-filled
+        endTime: editLog ? editLog.endTime : (isMeeting ? getCurrentTime() : ""),
         taskOwner: editLog ? (Array.isArray(editLog.taskOwner) ? editLog.taskOwner : (editLog.taskOwner ? editLog.taskOwner.split(',').map(s => s.trim()) : [])) : [],
         description: editLog ? editLog.description : "",
         taskType: editLog ? (Array.isArray(editLog.taskType) ? editLog.taskType : (editLog.taskType ? editLog.taskType.split(',').map(s => s.trim()) : [])) : [],
@@ -65,7 +69,9 @@ const QuickTaskForm = ({ user, onClose, onSuccess, editLog }) => {
         status: editLog ? editLog.status : "In Progress",
         logType: editLog ? editLog.logType : (isMeeting ? "Meeting" : "Quick"),
         assignedBy: editLog ? (Array.isArray(editLog.assignedBy) ? editLog.assignedBy : (editLog.assignedBy ? editLog.assignedBy.split(',').map(s => s.trim()) : [])) : [],
-        employeeId: editLog ? editLog.employeeId : ""
+        employeeId: editLog ? editLog.employeeId : "",
+        participants: editLog ? (Array.isArray(editLog.participants) ? editLog.participants.map(p => typeof p === 'object' ? p.value : p) : (editLog.participants ? editLog.participants.split(',').map(s => s.trim()) : [])) : [],
+        priority: editLog ? editLog.priority : "Medium"
     };
 
     const handleCloseSuccess = () => {
@@ -88,7 +94,14 @@ const QuickTaskForm = ({ user, onClose, onSuccess, editLog }) => {
     const [projects, setProjects] = useState([]);
     const [owners, setOwners] = useState([]);
     const [types, setTypes] = useState([]);
-    const [assignedByOptions, setAssignedByOptions] = useState([]); // Added state for Assigned By options
+    const [assignedByOptions, setAssignedByOptions] = useState([]);
+    const [participantOptions, setParticipantOptions] = useState([]);
+    const [selectedDepartment, setSelectedDepartment] = useState("All");
+
+    const [conflictingTask, setConflictingTask] = useState(null);
+    const [showHoldConfirmation, setShowHoldConfirmation] = useState(false);
+    const [pendingPayload, setPendingPayload] = useState(null);
+    const [isSubmittingTask, setIsSubmittingTask] = useState(false);
 
     // Fetch options
     const fetchOptions = async () => {
@@ -106,34 +119,46 @@ const QuickTaskForm = ({ user, onClose, onSuccess, editLog }) => {
             if (ownRes.ok) setOwners(await ownRes.json());
             if (typeRes.ok) setTypes(await typeRes.json());
 
-            // Fetch Assigned By options (using same endpoint structure if available or filter from getFilterOptions)
-            // The getFilterOptions endpoint returns { projects, owners, types, assignedBy }.
-            // We should use that endpoint instead of multiple fetches if possible, but the current code uses separate fetches?
-            // Wait, line 35-37 fetches from /options?category=... which is the 'Option' model.
-            // But the backend getFilterOptions uses WorkLog.distinct.
-            // The existing code at 34-38 fetches from `Option` model. 
-            // So we need to support 'AssignedBy' category in Option model too.
             const assignedRes = await fetch(`${API_URL}/options?category=AssignedBy`, { headers });
             if (assignedRes.ok) setAssignedByOptions(await assignedRes.json());
 
+
         } catch (error) {
-            console.error("Error fetching options:", error);
         }
     };
 
-    // Fetch Task Count for Date
-    const fetchTaskCount = async (date) => {
-        if (!date) return;
+    const fetchParticipants = async () => {
         try {
             const token = localStorage.getItem('token');
             const headers = token ? { "Authorization": `Bearer ${token}` } : {};
-            const res = await fetch(`${API_URL}/work-logs/count?date=${date}`, { headers });
+            const res = await fetch(`${API_URL}/employee/all-with-admins`, { headers });
+            if (res.ok) {
+                const data = await res.json();
+                setParticipantOptions(data.map(u => ({
+                    _id: u._id,
+                    value: u.name,
+                    role: u.role,
+                    employeeId: u.employeeId,
+                    category: 'Participant'
+                })));
+            }
+        } catch (error) {
+        }
+    };
+
+    // Fetch Task/Meeting Count for Date
+    const fetchTaskCount = async (date) => {
+        if (!date) return;
+        try {
+            const tokens = localStorage.getItem('token');
+            const headers = tokens ? { "Authorization": `Bearer ${tokens}` } : {};
+            const typeParam = isMeeting ? '&type=Meeting' : '';
+            const res = await fetch(`${API_URL}/work-logs/count?date=${date}${typeParam}`, { headers });
             if (res.ok) {
                 const data = await res.json();
                 setFormData(prev => ({ ...prev, taskNo: data.count + 1 }));
             }
         } catch (error) {
-            console.error("Error fetching task count:", error);
         }
     };
 
@@ -144,15 +169,20 @@ const QuickTaskForm = ({ user, onClose, onSuccess, editLog }) => {
         const userStr = localStorage.getItem('user');
         if (userStr) {
             try {
-                const user = JSON.parse(userStr);
-                if (user && (user._id || user.id)) {
-                    setFormData(prev => ({ ...prev, employeeId: user._id || user.id }));
+                const userObj = JSON.parse(userStr);
+                if (userObj && (userObj._id || userObj.id)) {
+                    setFormData(prev => ({ ...prev, employeeId: userObj._id || userObj.id }));
                 }
             } catch (e) {
-                console.error("Error parsing user from localStorage", e);
             }
         }
     }, []);
+
+    useEffect(() => {
+        if (isMeeting && participantOptions.length === 0) {
+            fetchParticipants();
+        }
+    }, [isMeeting]);
 
     useEffect(() => {
         if (!editLog) {
@@ -242,7 +272,6 @@ const QuickTaskForm = ({ user, onClose, onSuccess, editLog }) => {
                 alert(data.message || "Failed to add option. It may already exist.");
             }
         } catch (error) {
-            console.error("Error adding option:", error);
         }
     };
 
@@ -290,7 +319,6 @@ const QuickTaskForm = ({ user, onClose, onSuccess, editLog }) => {
                 alert("Failed to delete option.");
             }
         } catch (error) {
-            console.error("Error deleting option:", error);
         }
     };
 
@@ -307,21 +335,21 @@ const QuickTaskForm = ({ user, onClose, onSuccess, editLog }) => {
         const hours = Math.floor(diff / (1000 * 60 * 60));
         diff -= hours * 1000 * 60 * 60;
         const minutes = Math.floor(diff / (1000 * 60));
-        diff -= minutes * 1000 * 60;
-        const seconds = Math.floor(diff / 1000);
 
         let durationString = "";
         if (hours > 0) durationString += `${hours} hr${hours > 1 ? 's' : ''} `;
-        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''} `;
-        if (seconds > 0) durationString += `${seconds} sec${seconds > 1 ? 's' : ''}`;
+        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''}`;
 
-        return durationString.trim() || "0 sec";
+        return durationString.trim() || "0 min";
     };
 
     useEffect(() => {
         if (formData.startTime && formData.endTime) {
             const duration = calculateDurationStr(formData.startTime, formData.endTime);
             setFormData(prev => ({ ...prev, timeAutomation: duration }));
+        } else if (!formData.endTime) {
+            // Reset duration if end time is cleared (important for Quick Task creation flow)
+            setFormData(prev => ({ ...prev, timeAutomation: "" }));
         }
     }, [formData.startTime, formData.endTime]);
 
@@ -330,33 +358,80 @@ const QuickTaskForm = ({ user, onClose, onSuccess, editLog }) => {
         e.preventDefault();
         setError(null);
 
-        if (formData.projectName.length === 0 || formData.taskOwner.length === 0 || formData.taskType.length === 0 || !formData.date || !formData.startTime || !formData.endTime || !formData.description) {
-            setError("Please fill in all required fields.");
+        // Validation - Filter empty fields
+        const isMeetingTask = isMeeting || formData.logType === "Meeting";
+        const errors = [];
+        if (formData.projectName.length === 0) errors.push("Project Name");
+        if (isMeetingTask && (!formData.startTime || !formData.endTime)) errors.push("Time range");
+        if (!isMeetingTask && formData.assignedBy.length === 0) errors.push("Assigned By");
+        if (!isMeetingTask && formData.taskType.length === 0) errors.push("Type of Task");
+        if (!formData.description) errors.push("Description");
+
+        if (errors.length > 0) {
+            setError(`Error: Please provide ${errors.join(", ")}`);
             return;
         }
 
-        if (!formData.timeAutomation || formData.timeAutomation === "0 sec" || formData.timeAutomation === "Auto") {
-            setError("Duration cannot be 0 seconds. Please provide valid start and end times.");
+        // Check duration for Meetings
+        if (isMeetingTask && formData.startTime === formData.endTime) {
+            setError("Error: Start time and End time cannot be the same");
+            return;
+        }
+
+        setLoading(true);
+
+        // Standardize data (trimming)
+        const cleanedData = {
+            ...formData,
+            description: formData.description.trim(),
+        };
+
+        // Strict Validation
+        let validationError = null;
+
+        if (cleanedData.projectName.length === 0) validationError = "Project Name is required";
+        else if (!isMeeting && cleanedData.assignedBy.length === 0) validationError = "Assigned By is required";
+        else if (isMeeting && !cleanedData.date) validationError = "Date is required";
+        else if (isMeeting && !cleanedData.startTime) validationError = "Start Time is required";
+        else if (isMeeting && !cleanedData.endTime) validationError = "End Time is required";
+        else if (!isMeeting && cleanedData.taskType.length === 0) validationError = "Type of Task is required";
+        else if (!cleanedData.description) validationError = `${isMeeting ? 'Discussion Summary' : 'Description'} is required`;
+        else if (isMeeting && cleanedData.participants.length === 0) validationError = "At least one Participant is required";
+        else if (isMeeting && (!cleanedData.timeAutomation || ["0 sec", "Auto", ""].includes(cleanedData.timeAutomation))) {
+            validationError = "Duration cannot be 0 seconds";
+        }
+
+        if (validationError) {
+            setError(`Error: ${validationError}`);
+            setLoading(false);
             return;
         }
 
         setLoading(true);
 
         const payload = {
-            employeeId: formData.employeeId || user._id, // Use populated employeeId
-            date: formData.date,
-            projectName: Array.isArray(formData.projectName) ? formData.projectName.join(", ") : formData.projectName,
-            startTime: formData.startTime,
-            endTime: formData.endTime,
-            taskOwner: Array.isArray(formData.taskOwner) ? formData.taskOwner.join(", ") : formData.taskOwner,
-            description: formData.description,
-            taskType: Array.isArray(formData.taskType) ? formData.taskType.join(", ") : formData.taskType,
-            timeAutomation: formData.timeAutomation,
-            duration: formData.timeAutomation,
-            status: formData.status,
-            taskTitle: Array.isArray(formData.projectName) ? formData.projectName.join(", ") : formData.projectName,
-            logType: isOffline ? "Offline Task" : formData.logType,
-            assignedBy: Array.isArray(formData.assignedBy) ? formData.assignedBy.join(", ") : formData.assignedBy // Save as string
+            employeeId: cleanedData.employeeId || user._id,
+            date: cleanedData.date,
+            projectName: Array.isArray(cleanedData.projectName) ? cleanedData.projectName.join(", ") : cleanedData.projectName,
+            startTime: cleanedData.startTime,
+            endTime: cleanedData.endTime,
+            taskOwner: !isMeeting ? (user?.name || "") : (Array.isArray(cleanedData.taskOwner) ? cleanedData.taskOwner.join(", ") : cleanedData.taskOwner),
+            description: cleanedData.description,
+            taskType: Array.isArray(cleanedData.taskType) ? cleanedData.taskType.join(", ") : cleanedData.taskType,
+            timeAutomation: cleanedData.timeAutomation,
+            duration: cleanedData.timeAutomation,
+            status: !isMeeting ? (editLog ? cleanedData.status : "In Progress") : cleanedData.status,
+            taskTitle: Array.isArray(cleanedData.projectName) ? cleanedData.projectName.join(", ") : cleanedData.projectName,
+            logType: isOffline ? "Offline Task" : cleanedData.logType,
+            assignedBy: Array.isArray(cleanedData.assignedBy) ? cleanedData.assignedBy.join(", ") : cleanedData.assignedBy,
+            meetingTitle: cleanedData.meetingTitle,
+            participants: isMeeting
+                ? formData.participants.map(name => participantOptions.find(p => p.value === name)).filter(Boolean)
+                : (Array.isArray(cleanedData.participants) ? cleanedData.participants.join(", ") : cleanedData.participants),
+            priority: cleanedData.priority,
+            clientTime: new Date().toISOString(),
+            localTimeStr: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+            localDateStr: new Date().toLocaleDateString('en-CA')
         };
 
         if (isOffline) {
@@ -364,246 +439,360 @@ const QuickTaskForm = ({ user, onClose, onSuccess, editLog }) => {
             const offlineTasks = JSON.parse(localStorage.getItem('offlineQuickTasks') || '[]');
             offlineTasks.push(payload);
             localStorage.setItem('offlineQuickTasks', JSON.stringify(offlineTasks));
-
-            // Notify components to update their lists
             window.dispatchEvent(new Event('offlineTaskAdded'));
-
             setShowSuccess(true);
             setLoading(false);
             return;
         }
 
+        // Auto-Hold Check: If starting a NEW task as "In Progress"
+        if (payload.status === "In Progress" && !editLog) {
+            try {
+                const res = await fetch(`${API_URL}/tasks/check/active?userId=${user._id}`);
+                const data = await res.json();
+
+                if (data.hasActiveTask) {
+                    // Check if meeting exception applies:
+                    // Rule: Meetings only hold Main Task. QT/RT can remain In Progress.
+                    if (initialIsMeeting) {
+                        if (data.task.type === "Main Task") {
+                            // Rule: Meetings only hold Main Task. Perform auto-hold without popup.
+                            try {
+                                await fetch(`${API_URL}/tasks/${data.task._id}/status`, {
+                                    method: "PUT",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ status: "Hold", userId: user._id }),
+                                });
+                                // Fall through to performSubmit
+                            } catch (err) {
+                                console.error("Auto-hold failed:", err);
+                                // Fallback to popup if automation fails
+                                setConflictingTask(data.task);
+                                setPendingPayload(payload);
+                                setShowHoldConfirmation(true);
+                                setLoading(false);
+                                return;
+                            }
+                        } else {
+                            // Skip hold for non-main tasks (QT/RT) when starting a meeting
+                            await performSubmit(payload);
+                            return;
+                        }
+                    } else {
+                        // For non-meeting tasks (QT), always show the conflict popup
+                        setConflictingTask(data.task);
+                        setPendingPayload(payload);
+                        setShowHoldConfirmation(true);
+                        setLoading(false);
+                        return;
+                    }
+                }
+            } catch (error) {
+            }
+        }
+
+        await performSubmit(payload);
+    };
+
+    const performSubmit = async (payload) => {
         try {
             const url = editLog ? `${API_URL}/work-logs/${editLog._id}` : `${API_URL}/work-logs`;
             const method = editLog ? "PUT" : "POST";
-
-            // If editing, we shouldn't send Date/Time if they aren't supposed to change, but let's just send what we have
             const res = await fetch(url, {
                 method: method,
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload)
             });
-
             const data = await res.json();
             if (res.ok) {
                 setShowSuccess(true);
             } else {
-                alert(data.message || `Failed to ${editLog ? 'update' : 'add'} task`);
+                setError(`Error: ${data.message || 'Failed to save'}`);
             }
         } catch (error) {
-            console.error(`Error ${editLog ? 'updating' : 'adding'} task:`, error);
-            alert("Server error");
+            setError("Error: Server error");
         } finally {
             setLoading(false);
         }
     };
 
+    const confirmSwitchToNewTask = async () => {
+        if (!conflictingTask || !pendingPayload) return;
+        const now = new Date();
+        const timeData = {
+            clientTime: now.toISOString(),
+            localTimeStr: now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+            localDateStr: now.toLocaleDateString('en-CA')
+        };
+
+        setIsSubmittingTask(true);
+        try {
+            // 1. Put current task on Hold
+            let resHold;
+            if (conflictingTask.type === "Main Task") {
+                resHold = await fetch(`${API_URL}/tasks/${conflictingTask._id}/status`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        status: "Hold",
+                        userId: user._id,
+                        ...timeData
+                    }),
+                });
+            } else {
+                // Quick Task / Meeting
+                resHold = await fetch(`${API_URL}/work-logs/${conflictingTask._id}`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        status: "Hold",
+                        ...timeData
+                    }),
+                });
+            }
+
+            if (resHold.ok) {
+                // 2. Perform the pending submission
+                await performSubmit(pendingPayload);
+
+                setShowHoldConfirmation(false);
+                setConflictingTask(null);
+                setPendingPayload(null);
+            } else {
+                alert("Failed to put current task on Hold. Operation cancelled.");
+            }
+        } catch (error) {
+            alert("Error switching tasks");
+        } finally {
+            setIsSubmittingTask(false);
+        }
+    };
+
     return (
-        <div className="h-full flex flex-col bg-white relative">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                <div className="flex bg-gray-200/70 p-1 rounded-lg">
+        <>
+            <form onSubmit={handleSubmit} className="flex flex-col bg-white relative font-sans h-full max-h-full overflow-hidden">
+                <div className="p-4 md:p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 shrink-0">
+                    <div className="flex items-center">
+                        <h2 className="text-lg md:text-xl font-bold text-gray-800 tracking-tight">
+                            {editLog ? 'Edit Quick Task' : (isMeeting ? 'New Meeting Form' : ' New Quick Task')}
+                        </h2>
+                    </div>
                     <button
+                        onClick={onClose}
                         type="button"
-                        onClick={() => {
-                            setIsMeeting(false);
-                            setFormData(prev => ({ ...prev, logType: "Quick" }));
-                        }}
-                        className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all duration-300 ${!isMeeting ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        className="text-gray-400 hover:text-gray-600 p-2 rounded-full hover:bg-gray-100 transition-all duration-200"
                     >
-                        New Quick Task
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setIsMeeting(true);
-                            setFormData(prev => ({ ...prev, logType: "Meeting" }));
-                        }}
-                        className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all duration-300 ${isMeeting ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                    >
-                        Meeting
+                        <FaTimes />
                     </button>
                 </div>
-                <button
-                    onClick={onClose}
-                    className="text-gray-500 hover:text-gray-700 p-2 rounded-full hover:bg-gray-200 transition-colors"
-                >
-                    <FaTimes />
-                </button>
-            </div>
 
-            <div className="flex-1 overflow-y-auto p-6 scrollbar-hide">
-                {isOffline && (
-                    <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-4 flex items-center text-sm shadow-sm font-medium">
-                        <span className="font-bold mr-2">Offline Mode:</span> You are currently offline. Tasks will be saved locally and synchronized when you reconnect.
-                    </div>
-                )}
-                <form onSubmit={handleSubmit} className="space-y-5">
-                    <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-1">Project Name</label>
-                        <CustomDropdown
-                            options={projects}
-                            value={formData.projectName}
-                            onChange={(val) => handleDataChange('projectName', val)}
-                            placeholder="Select Project(s)"
-                            allowAdd={formData.logType !== "QT Task" && formData.logType !== "QT"}
-                            onAdd={(val) => handleAddNew(val, 'Project')}
-                            multiple={true}
-                            onDelete={handleRequestDelete}
-                            disabled={!!editLog && (editLog.logType === 'Meeting' || ["QT Task", "QT", "Quick"].includes(editLog.logType))}
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-1">Assigned By</label>
-                        <CustomDropdown
-                            options={assignedByOptions}
-                            value={formData.assignedBy}
-                            onChange={(val) => handleDataChange('assignedBy', val)}
-                            placeholder="Select Assigner(s)"
-                            allowAdd={true}
-                            onAdd={(val) => handleAddNew(val, 'AssignedBy')}
-                            multiple={true}
-                            onDelete={handleRequestDelete}
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-1">Date</label>
-                        <input
-                            type="date"
-                            name="date"
-                            value={formData.date}
-                            onChange={handleChange}
-                            required
-                            readOnly={!!editLog}
-                            className={`w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none ${editLog ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-1">Task No</label>
-                        <input
-                            type="text"
-                            value={formData.taskNo}
-                            readOnly
-                            className="w-full px-3 py-2 rounded-lg border border-gray-300 bg-gray-50 text-gray-500 cursor-not-allowed"
-                        />
-                    </div>
-
-
-                    <div className="grid grid-cols-3 gap-2">
+                <div className="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar">
+                    {isOffline && (
+                        <div className="mb-6 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-4 flex items-center text-sm shadow-sm font-medium">
+                            <span className="font-bold mr-2">Offline Mode:</span> You are currently offline. Tasks will be saved locally.
+                        </div>
+                    )}
+                    <div className="space-y-4">
                         <div>
-                            <label className="block text-xs font-semibold text-gray-700 mb-1">Start Time</label>
-                            <input
-                                type="time"
-                                name="startTime"
-                                value={formData.startTime}
-                                onChange={handleChange}
-                                readOnly={!!editLog}
-                                step="1"
-                                className={`w-full px-2 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none text-sm ${editLog ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
+                            <label className="block text-sm font-semibold text-gray-700 mb-1.5">Project Name</label>
+                            <CustomDropdown
+                                options={projects}
+                                value={formData.projectName}
+                                onChange={(val) => handleDataChange('projectName', val)}
+                                placeholder="Select Project(s)"
+                                allowAdd={canAddOptions}
+                                onAdd={(val) => handleAddNew(val, 'Project')}
+                                multiple={true}
+                                onDelete={handleRequestDelete}
+                                disabled={!!editLog && (editLog.logType === 'Meeting' || ["QT Task", "QT", "Quick"].includes(editLog.logType))}
                             />
                         </div>
-                        <div>
-                            <label className="block text-xs font-semibold text-gray-700 mb-1">End Time</label>
-                            <input
-                                type="time"
-                                name="endTime"
-                                value={formData.endTime}
-                                onChange={handleChange}
-                                readOnly={!!editLog}
-                                step="1"
-                                className={`w-full px-2 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none text-sm ${editLog ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-semibold text-gray-700 mb-1">Duration</label>
-                            <input
-                                type="text"
-                                value={formData.timeAutomation}
-                                readOnly
-                                className="w-full px-2 py-2 rounded-lg border border-gray-300 bg-gray-50 text-gray-500 cursor-not-allowed text-sm"
-                                placeholder="Auto"
-                            />
-                        </div>
-                    </div>
 
-                    <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-1">Task Owner</label>
-                        <CustomDropdown
-                            options={owners}
-                            value={formData.taskOwner}
-                            onChange={(val) => handleDataChange('taskOwner', val)}
-                            placeholder="Select Owner(s)"
-                            allowAdd={true}
-                            onAdd={(val) => handleAddNew(val, 'Owner')}
-                            multiple={true}
-                            onDelete={handleRequestDelete}
-                        />
-                    </div>
+                        {/* Meeting Title removed per user instruction */}
 
-                    <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-1">Type of Task</label>
-                        <CustomDropdown
-                            options={types}
-                            value={formData.taskType}
-                            onChange={(val) => handleDataChange('taskType', val)}
-                            placeholder="Select Type(s)"
-                            allowAdd={formData.logType !== "QT Task" && formData.logType !== "QT"}
-                            onAdd={(val) => handleAddNew(val, 'Type')}
-                            multiple={true}
-                            onDelete={handleRequestDelete}
-                            disabled={!!editLog && (editLog.logType === 'Meeting' || ["QT Task", "QT", "Quick"].includes(editLog.logType))}
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-1">Description</label>
-                        <textarea
-                            name="description"
-                            value={formData.description}
-                            onChange={handleChange}
-                            rows="3"
-                            required
-                            className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 outline-none resize-none scrollbar-hide"
-                            placeholder="Brief description..."
-                        ></textarea>
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">Status</label>
-                        <div className="grid grid-cols-3 gap-2">
-                            {["In Progress", "Hold", "Completed"].map(status => (
-                                <div
-                                    key={status}
-                                    onClick={() => handleDataChange('status', status)}
-                                    className={`cursor-pointer text-center py-2 rounded-lg border text-xs font-medium transition-colors ${formData.status === status
-                                        ? (status === 'Completed' ? 'bg-green-100 border-green-500 text-green-700' : status === 'Hold' ? 'bg-red-100 border-red-500 text-red-700' : 'bg-indigo-100 border-indigo-500 text-indigo-700')
-                                        : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                                        }`}
-                                >
-                                    {status}
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="pt-4 sticky bottom-0 bg-white pb-2">
-                        {error && (
-                            <div className="mb-3 p-3 bg-red-50 text-red-600 border border-red-200 rounded-lg text-sm font-medium text-center shadow-sm">
-                                {error}
+                        {!isMeeting && (
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Assigned By</label>
+                                <CustomDropdown
+                                    options={assignedByOptions}
+                                    value={formData.assignedBy}
+                                    onChange={(val) => handleDataChange('assignedBy', val)}
+                                    placeholder="Select Assigner(s)"
+                                    allowAdd={canAddOptions}
+                                    onAdd={(val) => handleAddNew(val, 'AssignedBy')}
+                                    multiple={true}
+                                    onDelete={handleRequestDelete}
+                                />
                             </div>
                         )}
-                        <button
-                            type="submit"
-                            disabled={loading}
-                            className={`w-full text-white font-bold py-3 rounded-lg transition shadow-lg ${isMeeting ? 'bg-teal-600 hover:bg-teal-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}
-                        >
-                            {loading ? "Saving..." : editLog ? "Update Task" : (isMeeting ? "Save Meeting Details" : "Save Quick Task")}
-                        </button>
+
+
+                        {isMeeting && (
+                            <div className="space-y-4">
+                                <div className="pt-2">
+                                    <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                                        Conducted By
+                                    </h3>
+
+                                    <div className="space-y-4 pl-3.5 border-l-2 border-gray-100">
+                                        {formData.participants.length > 0 && (
+                                            <div>
+                                                <label className="block text-[10px] font-bold text-gray-500 mb-2 uppercase tracking-wide opacity-80">Selected Members ({formData.participants.length})</label>
+                                                <div className="flex flex-wrap gap-1.5 p-1 bg-teal-50/30 rounded-lg">
+                                                    {formData.participants.map((name) => {
+                                                        const person = participantOptions.find(p => p.value === name);
+                                                        const rawId = person?.employeeId || "";
+                                                        const displayId = rawId ? String(rawId).slice(-3) : "";
+                                                        return (
+                                                            <button
+                                                                key={`selected-${name}`}
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    handleDataChange('participants', formData.participants.filter(p => p !== name));
+                                                                }}
+                                                                className="px-2 py-1 rounded-full border border-teal-600 bg-teal-600 text-white text-[9px] font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-sm hover:bg-teal-700 transition-colors"
+                                                            >
+                                                                {name} {displayId ? `- ${displayId}` : ""}
+                                                                <span className="text-[10px] opacity-70">×</span>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-gray-500 mb-2 uppercase tracking-wide opacity-80">Department</label>
+                                            <div className="flex flex-wrap gap-1.5 p-1">
+                                                {["All", ...new Set(participantOptions.flatMap(opt => Array.isArray(opt.role) ? opt.role : [opt.role]).filter(Boolean))].map((dept) => (
+                                                    <button
+                                                        key={dept}
+                                                        type="button"
+                                                        onClick={() => setSelectedDepartment(dept)}
+                                                        className={`px-2 py-1 rounded-full border transition-all duration-200 text-[9px] font-bold uppercase tracking-wider ${selectedDepartment === dept
+                                                            ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
+                                                            : "bg-white border-gray-200 text-gray-500 hover:border-indigo-300"
+                                                            }`}
+                                                    >
+                                                        {dept}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-gray-500 mb-2 uppercase tracking-wide opacity-80">Team Members</label>
+                                            <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto p-1.5 border border-gray-100 rounded-xl bg-gray-50/30 font-sans">
+                                                {participantOptions
+                                                    .filter(opt => selectedDepartment === "All" || (Array.isArray(opt.role) ? opt.role.includes(selectedDepartment) : opt.role === selectedDepartment))
+                                                    .map((option) => {
+                                                        const isSelected = formData.participants.includes(option.value);
+                                                        const rawId = option.employeeId ? String(option.employeeId).trim() : "";
+                                                        const displayId = rawId ? rawId.slice(-3) : `?(${Object.keys(option).filter(k => k !== 'value' && k !== '_id' && k !== 'category').join(',')})`;
+
+                                                        return (
+                                                            <button
+                                                                key={option._id}
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    const newParticipants = isSelected
+                                                                        ? formData.participants.filter(p => p !== option.value)
+                                                                        : [...formData.participants, option.value];
+                                                                    handleDataChange('participants', newParticipants);
+                                                                }}
+                                                                className={`px-2 py-1 rounded-full border transition-all duration-200 text-[9px] font-bold uppercase tracking-wider ${isSelected
+                                                                    ? "bg-teal-600 border-teal-600 text-white shadow-sm"
+                                                                    : "bg-white border-gray-200 text-gray-500 hover:border-indigo-300 shadow-sm"
+                                                                    }`}
+                                                            >
+                                                                {option.value} - {displayId}
+                                                            </button>
+                                                        );
+                                                    })}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-semibold text-gray-700 mb-1.5">Start Time</label>
+                                        <input
+                                            type="time"
+                                            name="startTime"
+                                            value={formData.startTime}
+                                            onChange={handleChange}
+                                            readOnly={!!editLog}
+                                            className={`w-full px-3 py-2 text-sm rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all text-gray-800 font-medium ${editLog ? 'bg-gray-50 text-gray-400 cursor-not-allowed border-gray-200' : ''}`}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-gray-700 mb-1.5">End Time</label>
+                                        <input
+                                            type="time"
+                                            name="endTime"
+                                            value={formData.endTime}
+                                            onChange={handleChange}
+                                            readOnly={!!editLog}
+                                            className={`w-full px-3 py-2 text-sm rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all text-gray-800 font-medium ${editLog ? 'bg-gray-50 text-gray-400 cursor-not-allowed border-gray-200' : ''}`}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {!isMeeting && (
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Type of Task</label>
+                                <CustomDropdown
+                                    options={types}
+                                    value={formData.taskType}
+                                    onChange={(val) => handleDataChange('taskType', val)}
+                                    placeholder="Select Type(s)"
+                                    allowAdd={canAddOptions}
+                                    onAdd={(val) => handleAddNew(val, 'Type')}
+                                    multiple={true}
+                                    onDelete={handleRequestDelete}
+                                    disabled={!!editLog && (editLog.logType === 'Meeting' || ["QT Task", "QT", "Quick"].includes(editLog.logType))}
+                                />
+                            </div>
+                        )}
+
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1.5">{isMeeting ? 'Discussion Summary' : 'Description'}</label>
+                            <textarea
+                                name="description"
+                                value={formData.description}
+                                onChange={handleChange}
+                                rows="3"
+                                required
+                                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all placeholder:text-gray-400 text-gray-600 font-medium resize-none custom-scrollbar"
+                                placeholder="Brief description..."
+                            ></textarea>
+                        </div>
+
+
+                        {/* Status selection removed for Meetings per user instruction */}
+
                     </div>
-                </form>
-            </div>
+                </div>
+
+                <div className="p-4 md:p-6 border-t bg-white shrink-0 z-10 shadow-[0_-4px_20px_-10px_rgba(0,0,0,0.1)]">
+                    {error && (
+                        <div className="mb-4 text-red-600 text-sm font-semibold">
+                            {error}
+                        </div>
+                    )}
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        className={`w-full text-white font-bold py-3.5 rounded-xl transition-all duration-300 shadow-lg active:scale-[0.98] ${isMeeting ? 'bg-teal-600 hover:bg-teal-700 shadow-teal-100' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100'} ${loading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                    >
+                        {loading ? "Saving..." : editLog ? "Update Task" : (isMeeting ? "Save Meeting Details" : "Create New Quick Task")}
+                    </button>
+                </div>
+            </form>
+
 
             {/* Custom Delete Confirmation Modal */}
             {showDeleteConfirm && (
@@ -660,7 +849,52 @@ const QuickTaskForm = ({ user, onClose, onSuccess, editLog }) => {
                     </div>
                 </div>
             )}
-        </div>
+
+            {/* Auto-Hold Confirmation Modal */}
+            {showHoldConfirmation && conflictingTask && (
+                <div className="absolute inset-0 z-[1001] flex items-center justify-center bg-black bg-opacity-50 ">
+                    <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-[360px] mx-4 border-l-4 border-amber-500">
+                        <div className="flex items-start mb-4">
+                            <div className="bg-amber-100 p-2 rounded-full mr-3 text-amber-600">
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-800">Active Task Conflict</h3>
+                                <p className="text-sm text-gray-600 mt-1">
+                                    You are already working on a <span className="font-bold text-indigo-600">
+                                        {conflictingTask.type === 'Main Task' ? 'Main Task' : conflictingTask.logType === 'Meeting' ? 'Meeting' : 'Quick Task'}
+                                    </span>.
+                                </p>
+                            </div>
+                        </div>
+                        <p className="text-sm text-gray-600 mb-6 bg-gray-50 p-3 rounded-lg">
+                            Do you want to put it on <span className="font-bold text-amber-600">Hold</span>?
+                        </p>
+                        <div className="flex justify-end gap-3">
+                            <button
+                                onClick={() => {
+                                    setShowHoldConfirmation(false);
+                                    setConflictingTask(null);
+                                    setPendingPayload(null);
+                                }}
+                                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-bold hover:bg-gray-200 transition"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmSwitchToNewTask}
+                                disabled={isSubmittingTask}
+                                className={`px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 shadow-md transition ${isSubmittingTask ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            >
+                                {isSubmittingTask ? "Switching..." : "Yes, Switch Task"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </>
     );
 };
 

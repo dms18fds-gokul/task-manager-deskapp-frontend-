@@ -5,13 +5,16 @@ import "./index.css";
 import App from "./App.jsx";
 import { AuthProvider } from "./context/AuthContext";
 import { SocketProvider } from "./context/SocketContext";
+import { UIProvider } from "./context/UIContext";
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <HashRouter>
       <AuthProvider>
         <SocketProvider>
-          <App />
+          <UIProvider>
+            <App />
+          </UIProvider>
         </SocketProvider>
       </AuthProvider>
     </HashRouter>

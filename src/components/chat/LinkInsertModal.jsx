@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Link as LinkIcon, Save } from 'lucide-react';
+import { X, Link as LinkIcon, Send } from 'lucide-react';
 
 const LinkInsertModal = ({ isOpen, onClose, onInsert, initialText = '' }) => {
     const [text, setText] = useState(initialText);
@@ -49,11 +49,11 @@ const LinkInsertModal = ({ isOpen, onClose, onInsert, initialText = '' }) => {
                     <div className="space-y-1">
                         <label className="text-sm text-gray-400 block">Link</label>
                         <input
-                            type="url"
+                            type="text"
                             value={url}
                             onChange={(e) => setUrl(e.target.value)}
                             className="w-full bg-[#1A1D21] border border-white/10 rounded-lg px-3 py-2 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500/50 transition-colors"
-                            placeholder="https://example.com"
+                            placeholder="https://example.com or google.com"
                             required
                         />
                     </div>
@@ -70,8 +70,8 @@ const LinkInsertModal = ({ isOpen, onClose, onInsert, initialText = '' }) => {
                             type="submit"
                             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
                         >
-                            <Save size={16} />
-                            Save
+                            <Send size={16} />
+                            Send
                         </button>
                     </div>
                 </form>

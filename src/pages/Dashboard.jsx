@@ -5,10 +5,11 @@ import StatCard from "../components/StatCard";
 import TaskDetailsModal from "../components/TaskDetailsModal";
 import CustomDropdown from "../components/CustomDropdown";
 import TableLoader from "../components/TableLoader";
-import { FaUsers, FaProjectDiagram, FaTasks, FaClipboardList, FaCheckCircle, FaEllipsisV, FaEye, FaUserTag, FaEnvelope, FaIdCard, FaUser, FaCalendarAlt, FaExclamationCircle, FaTimes, FaCheck, FaHistory, FaRedo, FaSearch, FaPaperPlane, FaUserCheck } from "react-icons/fa";
+import { FaUsers, FaProjectDiagram, FaTasks, FaClipboardList, FaCheckCircle, FaEllipsisV, FaEye, FaUserTag, FaEnvelope, FaIdCard, FaUser, FaCalendarAlt, FaExclamationCircle, FaTimes, FaCheck, FaHistory, FaRedo, FaSearch, FaPaperPlane, FaUserCheck, FaExternalLinkAlt } from "react-icons/fa";
 import { MdPendingActions, MdCheckCircle, MdCancel, MdDateRange } from "react-icons/md";
 import io from "socket.io-client";
 import { API_URL, getSocketUrl } from "../utils/config";
+import EmployeeDayLogsModal from "../components/EmployeeDayLogsModal";
 
 const formatDuration = (ms) => {
     if (!ms || ms <= 0) return "-";
@@ -141,6 +142,16 @@ const Dashboard = () => {
     const [filteredTasks, setFilteredTasks] = useState([]);
     const [selectedTaskForDetails, setSelectedTaskForDetails] = useState(null);
     const [openTaskDropdownId, setOpenTaskDropdownId] = useState(null);
+    const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
+    const [confirmNavigation, setConfirmNavigation] = useState(null);
+
+    // Day Logs Modal State
+    const [isDayLogsModalOpen, setIsDayLogsModalOpen] = useState(false);
+    const [selectedDayLogInfo, setSelectedDayLogInfo] = useState({
+        employeeId: "",
+        employeeName: "",
+        date: ""
+    });
 
     // Task Filter State
     const todayDate = new Date().toLocaleDateString('en-CA');
@@ -203,6 +214,7 @@ const Dashboard = () => {
     const [leaves, setLeaves] = useState([]);
     const [pendingLeaves, setPendingLeaves] = useState([]);
     const [attendanceHistory, setAttendanceHistory] = useState([]); // New State for History
+    const [userStatuses, setUserStatuses] = useState([]); // Real-time extension statuses
 
     const [attendanceFilters, setAttendanceFilters] = useState({
         fromDate: "",
@@ -259,6 +271,8 @@ const Dashboard = () => {
 
     // Filter Logic for Leave History
     const filteredLeaves = leaves.filter(leave => {
+        if (leave.employeeId && (leave.employeeId.isProfileActive === false || leave.employeeId.isActive === false)) return false;
+
         let matchDate = true;
 
         if (appliedLeaveHistoryFilters.fromDate) {
@@ -303,7 +317,6 @@ const Dashboard = () => {
                 alert("No channel found for this task yet.");
             }
         } catch (error) {
-            console.error("Error navigating to chat:", error);
             alert("Error navigating to chat");
         }
     };
@@ -311,6 +324,11 @@ const Dashboard = () => {
     useEffect(() => {
         let result = employees;
         const searchVal = appliedEmployeeSearch;
+
+        // Hide inactive users from the tables unless we are in 'total' view
+        if (viewMode !== 'total') {
+            result = result.filter(e => e.isActive !== false && e.isProfileActive !== false);
+        }
 
         if (searchVal && searchVal.trim() !== "") {
             const query = searchVal.trim().toLowerCase();
@@ -325,7 +343,7 @@ const Dashboard = () => {
         }
 
         setFilteredEmployees(result);
-    }, [employees, appliedEmployeeSearch]);
+    }, [employees, appliedEmployeeSearch, viewMode]);
 
     // Task Filtering Logic
     useEffect(() => {
@@ -401,7 +419,6 @@ const Dashboard = () => {
                 alert("Failed to update status");
             }
         } catch (error) {
-            console.error("Error updating leave:", error);
             alert("Error updating leave");
         }
     };
@@ -490,7 +507,6 @@ const Dashboard = () => {
                     setEmployees(data);
                 }
             } catch (error) {
-                console.error("Error fetching employees:", error);
             }
         };
 
@@ -502,7 +518,6 @@ const Dashboard = () => {
                     setStats(data);
                 }
             } catch (error) {
-                console.error("Error fetching stats:", error);
             }
         };
 
@@ -514,7 +529,6 @@ const Dashboard = () => {
                     setAllTasks(data);
                 }
             } catch (error) {
-                console.error("Error fetching all tasks:", error);
             }
         };
 
@@ -524,7 +538,7 @@ const Dashboard = () => {
                 if (res.ok) {
                     const data = await res.json();
                     setLeaves(data);
-                    setPendingLeaves(data.filter(l => l.status === "Pending"));
+                    setPendingLeaves(data.filter(l => l.status === "Pending" && (!l.employeeId || (l.employeeId.isProfileActive !== false && l.employeeId.isActive !== false))));
                 }
             } catch (error) {
             }
@@ -538,7 +552,32 @@ const Dashboard = () => {
                     setAttendanceHistory(data);
                 }
             } catch (error) {
-                console.error("Error fetching attendance history:", error);
+            }
+        };
+
+        const fetchExtensionStatuses = async () => {
+            try {
+                const res = await fetch(`${API_URL}/track/status`);
+                if (res.ok) {
+                    const data = await res.json();
+                    setUserStatuses(data.data || []);
+                }
+            } catch (error) {
+                console.error("Error fetching extension statuses:", error);
+            }
+        };
+
+        const fetchPendingApprovalsCount = async () => {
+            try {
+                const res = await fetch(`${API_URL}/messages/pending/count`, {
+                    headers: { 'x-auth-token': localStorage.getItem('token') }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    setPendingApprovalsCount(data.count);
+                }
+            } catch (error) {
+                console.error("Error fetching pending approvals count:", error);
             }
         };
 
@@ -547,12 +586,13 @@ const Dashboard = () => {
         fetchAllTasks();
         fetchLeaves();
         fetchAttendanceHistory();
+        fetchExtensionStatuses();
+        fetchPendingApprovalsCount();
 
         // Socket.IO Connection
         const socket = io(getSocketUrl());
 
         socket.on("connect", () => {
-            // console.log("Connected to socket server");
         });
 
         socket.on("attendanceUpdate", (data) => {
@@ -594,9 +634,39 @@ const Dashboard = () => {
         // Listen for new leave applications
         socket.on("newLeave", (newLeave) => {
             setLeaves((prev) => [newLeave, ...prev]);
-            if (newLeave.status === "Pending") {
+            if (newLeave.status === "Pending" && (!newLeave.employeeId || (newLeave.employeeId.isProfileActive !== false && newLeave.employeeId.isActive !== false))) {
                 setPendingLeaves((prev) => [newLeave, ...prev]);
             }
+        });
+
+        // Listen for real-time extension heartbeats/status updates
+        socket.on("extension_status_update", (data) => {
+            setUserStatuses((prev) => {
+                const index = prev.findIndex(s => s._id === data._id);
+                if (index !== -1) {
+                    const updated = [...prev];
+                    updated[index] = { ...updated[index], ...data };
+                    return updated;
+                }
+                return [...prev, data];
+            });
+        });
+
+        // Listen for batch status updates on connect
+        socket.on("initial_extension_statuses", (data) => {
+            setUserStatuses(data);
+        });
+
+        // Listen for message approvals
+        socket.on("message", (msg) => {
+            if (msg.isApproval && msg.approvalStatus === 'pending') {
+                setPendingApprovalsCount(prev => prev + 1);
+            }
+        });
+
+        socket.on("message_approval_updated", (data) => {
+            // When status changes from pending to approved/rejected, decrement the count
+            setPendingApprovalsCount(prev => Math.max(0, prev - 1));
         });
 
         return () => {
@@ -617,6 +687,8 @@ const Dashboard = () => {
 
     // Filter Logic for Attendance History
     const filteredHistory = attendanceHistory.filter(record => {
+        if (record.employeeId && (record.employeeId.isProfileActive === false || record.employeeId.isActive === false)) return false;
+
         const filterFromDate = appliedAttendanceFilters.fromDate || todayDate;
         const filterToDate = appliedAttendanceFilters.toDate || todayDate;
 
@@ -677,25 +749,25 @@ const Dashboard = () => {
             {isSidebarOpen && (
                 <div className="fixed inset-0 z-40 md:hidden">
                     {/* Backdrop */}
-                    <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setIsSidebarOpen(false)}></div>
+                    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)}></div>
                     {/* Sidebar */}
                     <div className="absolute inset-y-0 left-0 z-50">
-                        <Sidebar className="flex h-full shadow-xl" />
+                        <Sidebar className="flex h-full shadow-2xl" onClose={() => setIsSidebarOpen(false)} />
                     </div>
                 </div>
             )}
 
             {/* Main Content */}
             <div className="flex-1 min-w-0 flex flex-col h-screen overflow-hidden">
-                {/* Header (Mobile toggle) */}
-                <header className="bg-white shadow-sm p-4 flex justify-between items-center md:hidden z-10">
-                    <h1 className="text-xl font-bold text-gray-800">AdminPanel</h1>
+                {/* Mobile Header */}
+                <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center md:hidden z-10 sticky top-0">
+                    <h1 className="text-xl font-bold text-gray-800 uppercase tracking-tight">Dashboard</h1>
                     <button
                         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                        className="text-gray-600 focus:outline-none p-2 rounded hover:bg-gray-100"
+                        className="p-2 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors border border-gray-200"
                     >
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7"></path>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path>
                         </svg>
                     </button>
                 </header>
@@ -703,9 +775,9 @@ const Dashboard = () => {
                 <main className="flex-1 p-6 overflow-y-auto">
                     <div className="mb-6 flex flex-col xl:flex-row xl:justify-between xl:items-end gap-6">
                         <div>
-                            <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
+                            <h1 className="text-2xl font-bold text-gray-800 uppercase">Dashboard</h1>
                             <div className="mt-3">
-                                <p className="text-xl font-medium text-gray-500 mb-1">Hi, Welcome Back 👋</p>
+                                <p className="text-xl font-medium text-gray-500 mb-1 uppercase">Hi, Welcome Back 👋</p>
                                 <div className="flex flex-wrap items-center gap-2">
                                     <h2 className="text-xl font-extrabold text-gray-800 tracking-tight leading-none">
                                         {user.name?.toUpperCase()}
@@ -730,7 +802,7 @@ const Dashboard = () => {
                                         <div className="min-w-0 pr-2">
                                             <p className="text-emerald-100 text-[10px] sm:text-xs font-medium uppercase tracking-wider truncate">Present</p>
                                             <h3 className="text-xl sm:text-2xl font-bold mt-1">
-                                                {employees.filter(e => e.status === "Present").length}
+                                                {employees.filter(e => e.status === "Present" && e.isActive !== false && e.isProfileActive !== false).length}
                                             </h3>
                                         </div>
                                         <div className="p-2 bg-white bg-opacity-20 rounded-full shrink-0">
@@ -745,7 +817,7 @@ const Dashboard = () => {
                                         <div className="min-w-0 pr-2">
                                             <p className="text-rose-100 text-[10px] sm:text-xs font-medium uppercase tracking-wider truncate">Absent</p>
                                             <h3 className="text-xl sm:text-2xl font-bold mt-1">
-                                                {employees.filter(e => e.status === "Absent").length}
+                                                {employees.filter(e => e.status === "Absent" && e.isActive !== false && e.isProfileActive !== false).length}
                                             </h3>
                                         </div>
                                         <div className="p-2 bg-white bg-opacity-20 rounded-full shrink-0">
@@ -760,7 +832,7 @@ const Dashboard = () => {
                                         <div className="min-w-0 pr-2">
                                             <p className="text-blue-100 text-[10px] sm:text-xs font-medium uppercase tracking-wider truncate">Attendance</p>
                                             <h3 className="text-xl sm:text-2xl font-bold mt-1">
-                                                {employees.length}
+                                                {employees.filter(e => e.isProfileActive !== false && e.isActive !== false).length}
                                             </h3>
                                         </div>
                                         <div className="p-2 bg-white bg-opacity-20 rounded-full shrink-0">
@@ -786,10 +858,10 @@ const Dashboard = () => {
                             />
                         </div>
 
-                        <div onClick={() => handleViewChange('present')} className="cursor-pointer transition-transform hover:scale-105">
+                        <div onClick={() => handleViewChange('active_employees')} className="cursor-pointer transition-transform hover:scale-105">
                             <StatCard
                                 title="Active Employees"
-                                count={employees.filter(e => e.status === "Present").length}
+                                count={employees.filter(e => e.isProfileActive !== false && e.isActive !== false).length}
                                 color="border-emerald-500"
                                 icon={<FaUserCheck />}
                             />
@@ -857,23 +929,43 @@ const Dashboard = () => {
                                 icon={<MdDateRange />}
                             />
                         </div>
+
+                        <div className="cursor-pointer transition-transform hover:scale-105">
+                            <StatCard
+                                title="Pending Approvals"
+                                count={pendingApprovalsCount}
+                                color="border-amber-500"
+                                icon={<MdPendingActions />}
+                            />
+                        </div>
+
+                        <div onClick={() => handleViewChange('extension_status')} className="cursor-pointer transition-transform hover:scale-105">
+                            <StatCard
+                                title="Extension Active"
+                                count={userStatuses.filter(s => s.status === "Active").length}
+                                color="border-indigo-600"
+                                icon={<FaExternalLinkAlt />}
+                            />
+                        </div>
                     </div>
 
                     {/* Dynamic Employee Table Section */}
-                    {['total', 'present', 'absent', 'attendance_sheet', 'working_hours'].includes(viewMode) && (
+                    {['total', 'active_employees', 'present', 'absent', 'attendance_sheet', 'working_hours', 'extension_status'].includes(viewMode) && (
                         <div className="bg-white rounded-xl shadow-sm border border-gray-100 mb-8">
                             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
                                 <h3 className="text-lg font-extrabold text-slate-800 tracking-wider uppercase">
                                     {viewMode === 'total' && "TOTAL EMPLOYEES"}
+                                    {viewMode === 'active_employees' && "ACTIVE EMPLOYEES"}
                                     {viewMode === 'present' && "PRESENT EMPLOYEES"}
                                     {viewMode === 'absent' && "ABSENT EMPLOYEES"}
                                     {viewMode === 'attendance_sheet' && "ATTENDANCE"}
                                     {viewMode === 'working_hours' && "WORKING HOURS"}
+                                    {viewMode === 'extension_status' && "EXTENSION ACTIVE STATUS"}
                                 </h3>
                             </div>
 
-                            {/* Filter Navbar (Only for Total View) */}
-                            {viewMode === 'total' && (
+                            {/* Filter Navbar (for Total & Active Views) */}
+                            {(viewMode === 'total' || viewMode === 'active_employees') && (
                                 <div className="p-6 bg-gray-50/50 border-b border-gray-100">
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
                                         {/* Employee Search */}
@@ -900,6 +992,7 @@ const Dashboard = () => {
                                             {isEmployeeDropdownOpen && (
                                                 <div className="absolute top-[calc(100%+4px)] left-0 w-full bg-white border border-gray-100 rounded-xl shadow-2xl max-h-[200px] overflow-y-auto z-[999] custom-scrollbar">
                                                     {employees.filter(e => {
+                                                        if (e.isActive === false || e.isProfileActive === false) return false;
                                                         const query = employeeSearch.toLowerCase().trim();
                                                         if (!query) return true;
                                                         return e.name?.toLowerCase().includes(query) ||
@@ -907,6 +1000,7 @@ const Dashboard = () => {
                                                             (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
                                                     }).length > 0 ? (
                                                         employees.filter(e => {
+                                                            if (e.isActive === false || e.isProfileActive === false) return false;
                                                             const query = employeeSearch.toLowerCase().trim();
                                                             if (!query) return true;
                                                             return e.name?.toLowerCase().includes(query) ||
@@ -982,33 +1076,44 @@ const Dashboard = () => {
                                             <thead>
                                                 <tr className="bg-gray-50/50 text-left border-b border-gray-200">
                                                     <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[3%] text-center">S.No</th>
-                                                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Employee ID</th>
 
-                                                    {viewMode === 'total' ? (
+                                                    {viewMode === 'extension_status' ? (
                                                         <>
-                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Full Name</th>
-                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[18%]">Email Address</th>
-                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Department</th>
-                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Role</th>
-                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Work Type</th>
-                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Joining Date</th>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-3/10">Employee</th>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-3/10">Department</th>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-2/10">Extension Status</th>
+                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-2/10 text-center">Last Active</th>
                                                         </>
                                                     ) : (
-                                                        <>
-                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Full Name</th>
-                                                            {viewMode !== 'present' && <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Department</th>}
-                                                            {viewMode === 'absent' && <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Email Address</th>}
-                                                        </>
+                                                        (viewMode === 'total' || viewMode === 'active_employees') ? (
+                                                            <>
+                                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Employee</th>
+                                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[18%]">Email Address</th>
+                                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[15%]">Department</th>
+                                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Role</th>
+                                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Work Type</th>
+                                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Joining Date</th>
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Employee</th>
+                                                                {viewMode !== 'present' && <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Department</th>}
+                                                                {viewMode === 'absent' && <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Email Address</th>}
+                                                            </>
+                                                        )
                                                     )}
 
                                                     {/* Columns specific to View Mode */}
                                                     {viewMode === 'present' && (
                                                         <>
-                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%]">Login Time</th>
-                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-[10%] text-center">Logout Time</th>
-                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-emerald-600 w-[10%] text-center">Active Hours</th>
-                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-amber-600 w-[10%] text-center">Idle Hours</th>
-                                                            <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-rose-600 w-[10%] text-center">Inactive Hours</th>
+                                                            <th className="px-2 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-center bg-slate-100/40">Login Time</th>
+                                                            <th className="px-2 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-center bg-slate-100/40">Logout Time</th>
+                                                            <th className="px-2 py-4 text-xs font-bold uppercase tracking-wider text-rose-600 text-center bg-slate-100/40">Inactive Hours</th>
+                                                            <th className="px-2 py-4 text-xs font-bold uppercase tracking-wider text-amber-600 text-center bg-indigo-100/40">Idle Hours</th>
+                                                            <th className="px-2 py-4 text-xs font-bold uppercase tracking-wider text-purple-600 text-center bg-indigo-100/40">QT Hours</th>
+                                                            <th className="px-2 py-4 text-xs font-bold uppercase tracking-wider text-emerald-600 text-center bg-teal-100/40">Active Hours</th>
+                                                            <th className="px-2 py-4 text-xs font-bold uppercase tracking-wider text-rose-600 text-center bg-teal-100/40">Meeting Hours</th>
+                                                            <th className="px-2 py-4 text-xs font-bold uppercase tracking-wider text-indigo-600 text-center bg-teal-100/40">Total Working Hours</th>
                                                         </>
                                                     )}
                                                     {viewMode === 'absent' && (
@@ -1018,85 +1123,130 @@ const Dashboard = () => {
                                             </thead>
                                             <tbody className="divide-y divide-gray-100">
                                                 {(
-                                                    viewMode === 'total' ? filteredEmployees :
-                                                        viewMode === 'present' ? employees.filter(e => e.status === "Present") :
-                                                            viewMode === 'absent' ? employees.filter(e => e.status === "Absent") : []
+                                                    viewMode === 'extension_status' ? employees.filter(e => e.isActive !== false && e.isProfileActive !== false) :
+                                                        (viewMode === 'total' || viewMode === 'active_employees') ? filteredEmployees :
+                                                            viewMode === 'present' ? filteredEmployees.filter(e => e.status === "Present") :
+                                                                viewMode === 'absent' ? filteredEmployees.filter(e => e.status === "Absent") : []
                                                 ).map((emp, index) => {
+                                                    const extStatus = userStatuses.find(s => s._id === emp._id) || { status: 'Inactive', lastSeen: null };
+                                                    const isExtActive = extStatus.status === 'Active';
+
                                                     return (
                                                         <tr key={emp._id} className="hover:bg-gray-50 transition-colors py-4">
                                                             <td className="px-6 py-4 text-center text-gray-400 font-medium text-xs border-r border-gray-50 min-w-[50px]">
                                                                 {(index + 1).toString().padStart(2, '0')}
                                                             </td>
-                                                            <td className="px-6 py-4 font-semibold text-gray-800 text-sm">{emp.employeeId || "-"}</td>
 
-                                                            {viewMode === 'total' ? (
+                                                            {viewMode === 'extension_status' ? (
                                                                 <>
-                                                                    <td className="px-6 py-4 align-middle font-bold text-gray-900 text-sm">
-                                                                        {emp.name}
-                                                                    </td>
-                                                                    <td className="px-6 py-4 align-middle text-sm text-gray-500 break-all">
-                                                                        {emp.email}
+                                                                    <td className="px-6 py-4 align-middle">
+                                                                        <div className="font-bold text-gray-900 text-sm">{emp.name}</div>
+                                                                        <div className="text-xs text-gray-500 font-mono mt-0.5">{emp.employeeId || "-"}</div>
                                                                     </td>
                                                                     <td className="px-6 py-4 align-middle">
-                                                                        <div className="flex flex-wrap gap-1">
-                                                                            {Array.isArray(emp.role) ? emp.role.map((r, i) => (
-                                                                                <span key={i} className="px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-normal">
-                                                                                    {r}
-                                                                                </span>
-                                                                            )) : (
-                                                                                <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-normal">{emp.role}</span>
-                                                                            )}
+                                                                        <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100">
+                                                                            {Array.isArray(emp.role) ? emp.role.join(", ") : emp.role || "N/A"}
+                                                                        </span>
+                                                                    </td>
+                                                                    <td className="px-6 py-4 align-middle">
+                                                                        <div className="flex items-center gap-2">
+                                                                            <span className={`w-2 h-2 rounded-full ${isExtActive ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-rose-400'}`}></span>
+                                                                            <span className={`text-xs font-bold uppercase tracking-wider ${isExtActive ? 'text-emerald-600' : 'text-rose-500'}`}>
+                                                                                {isExtActive ? 'Active' : 'Inactive'}
+                                                                            </span>
                                                                         </div>
                                                                     </td>
-                                                                    <td className="px-6 py-4 text-gray-700 align-middle text-sm">{emp.designation || ""}</td>
-                                                                    <td className="px-6 py-4 text-gray-700 align-middle text-sm">{emp.workType || ""}</td>
-                                                                    <td className="px-6 py-4 text-gray-500 align-middle text-sm whitespace-nowrap">
-                                                                        {emp.joiningDate ? new Date(emp.joiningDate).toLocaleDateString() : "-"}
+                                                                    <td className="px-6 py-4 text-center text-gray-500 text-xs font-medium">
+                                                                        {extStatus.lastSeen ? new Date(extStatus.lastSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "Never"}
                                                                     </td>
                                                                 </>
                                                             ) : (
-                                                                <>
-                                                                    <td className="px-6 py-4 align-middle">
-                                                                        <div className="font-semibold text-gray-800 text-sm">{emp.name}</div>
-                                                                        {viewMode === 'present' && (
-                                                                            <div className="mt-1">
-                                                                                <span className="text-[10px] text-indigo-600 font-medium bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                                                                (viewMode === 'total' || viewMode === 'active_employees') ? (
+                                                                    <>
+                                                                        <td className="px-6 py-4 align-middle">
+                                                                            <div className="font-bold text-gray-900 text-sm">{emp.name}</div>
+                                                                            <div className="text-xs text-gray-500 font-mono mt-0.5">{emp.employeeId || "-"}</div>
+                                                                        </td>
+                                                                        <td className="px-6 py-4 align-middle text-sm text-gray-500 break-all">
+                                                                            {emp.email}
+                                                                        </td>
+                                                                        <td className="px-6 py-4 align-middle">
+                                                                            <div className="flex flex-wrap gap-1">
+                                                                                {Array.isArray(emp.role) ? emp.role.map((r, i) => (
+                                                                                    <span key={i} className="px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-normal">
+                                                                                        {r}
+                                                                                    </span>
+                                                                                )) : (
+                                                                                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-normal">{emp.role}</span>
+                                                                                )}
+                                                                            </div>
+                                                                        </td>
+                                                                        <td className="px-6 py-4 text-gray-700 align-middle text-sm">{emp.designation || ""}</td>
+                                                                        <td className="px-6 py-4 text-gray-700 align-middle text-sm">{emp.workType || ""}</td>
+                                                                        <td className="px-6 py-4 text-gray-500 align-middle text-sm whitespace-nowrap">
+                                                                            {emp.joiningDate ? new Date(emp.joiningDate).toLocaleDateString() : "-"}
+                                                                        </td>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <td className="px-6 py-4 align-middle">
+                                                                            <div className="font-semibold text-gray-800 text-sm">{emp.name}</div>
+                                                                            <div className="text-xs text-gray-500 font-mono mt-0.5">{emp.employeeId || "-"}</div>
+                                                                            {viewMode === 'present' && (
+                                                                                <div className="mt-1">
+                                                                                    <span className="text-[10px] text-indigo-600 font-medium bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                                                                                        {Array.isArray(emp.role) ? emp.role.join(", ") : emp.role}
+                                                                                    </span>
+                                                                                </div>
+                                                                            )}
+                                                                        </td>
+                                                                        {viewMode !== 'present' && (
+                                                                            <td className="px-6 py-4 align-middle">
+                                                                                <span className="text-xs text-indigo-600 font-medium bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
                                                                                     {Array.isArray(emp.role) ? emp.role.join(", ") : emp.role}
                                                                                 </span>
-                                                                            </div>
+                                                                            </td>
                                                                         )}
-                                                                    </td>
-                                                                    {viewMode !== 'present' && (
-                                                                        <td className="px-6 py-4 align-middle">
-                                                                            <span className="text-xs text-indigo-600 font-medium bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
-                                                                                {Array.isArray(emp.role) ? emp.role.join(", ") : emp.role}
-                                                                            </span>
-                                                                        </td>
-                                                                    )}
-                                                                    {viewMode === 'absent' && <td className="px-6 py-4 text-blue-600 text-sm">{emp.email || "-"}</td>}
-                                                                </>
+                                                                        {viewMode === 'absent' && <td className="px-6 py-4 text-blue-600 text-sm">{emp.email || "-"}</td>}
+                                                                    </>
+                                                                )
                                                             )}
 
                                                             {/* Present View Extra Column */}
-                                                            {viewMode === 'present' && (
-                                                                <>
-                                                                    <td className="px-6 py-4 font-mono text-gray-600 text-sm text-center">
-                                                                        {emp.loginTime ? new Date(emp.loginTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-"}
-                                                                    </td>
-                                                                    <td className="px-6 py-4 font-mono text-indigo-600 font-bold text-sm text-center">
-                                                                        {emp.logoutTime ? new Date(emp.logoutTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-"}
-                                                                    </td>
-                                                                    <td className="px-6 py-4 font-mono text-emerald-600 font-bold text-sm text-center">
-                                                                        {emp.formattedActiveTime || "00:00:00"}
-                                                                    </td>
-                                                                    <td className="px-6 py-4 font-mono text-amber-600 font-bold text-sm text-center">
-                                                                        {emp.formattedIdleTime || "00:00:00"}
-                                                                    </td>
-                                                                    <td className="px-6 py-4 font-mono text-rose-600 font-bold text-sm text-center">
-                                                                        {calculateInactiveHours(emp.formattedActiveTime, emp.formattedIdleTime)}
-                                                                    </td>
-                                                                </>
-                                                            )}
+                                                            {viewMode === 'present' && (() => {
+                                                                const todayRecord = attendanceHistory.find(r => r.date === todayDate && (r.employeeId?._id === emp._id || r.employeeId === emp._id));
+                                                                const qtHours = todayRecord?.qtHours || "00:00:00";
+                                                                const meetingHours = todayRecord?.meetingHours || "00:00:00";
+
+                                                                return (
+                                                                    <>
+                                                                        <td className="px-2 py-4 font-mono text-gray-600 text-sm text-center bg-slate-100/40">
+                                                                            {emp.loginTime ? new Date(emp.loginTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-"}
+                                                                        </td>
+                                                                        <td className="px-2 py-4 font-mono text-gray-500 font-bold text-sm text-center bg-slate-100/40">
+                                                                            {emp.logoutTime ? new Date(emp.logoutTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-"}
+                                                                        </td>
+                                                                        <td className="px-2 py-4 font-mono text-rose-600 font-bold text-sm text-center bg-slate-100/40">
+                                                                            {calculateInactiveHours(emp.formattedActiveTime, emp.formattedIdleTime)}
+                                                                        </td>
+                                                                        <td className="px-2 py-4 font-mono text-amber-600 font-bold text-sm text-center bg-indigo-100/40">
+                                                                            {emp.formattedIdleTime || "00:00:00"}
+                                                                        </td>
+                                                                        <td className="px-2 py-4 font-mono text-purple-600 font-bold text-sm text-center bg-indigo-100/40">
+                                                                            {qtHours}
+                                                                        </td>
+                                                                        <td className="px-2 py-4 font-mono text-emerald-600 font-bold text-sm text-center bg-teal-100/40">
+                                                                            {emp.formattedActiveTime || "00:00:00"}
+                                                                        </td>
+                                                                        <td className="px-2  py-4 font-mono text-rose-600 font-bold text-sm text-center bg-teal-100/40">
+                                                                            {meetingHours}
+                                                                        </td>
+                                                                        <td className="px-2 py-4 font-mono text-indigo-600 font-bold text-sm text-center bg-teal-100/40">
+                                                                            {addTimes(emp.formattedActiveTime || "00:00:00", meetingHours)}
+                                                                        </td>
+                                                                    </>
+                                                                );
+                                                            })()}
 
                                                             {/* Absent View Extra Column */}
                                                             {viewMode === 'absent' && (
@@ -1120,13 +1270,19 @@ const Dashboard = () => {
                                                 })}
 
                                                 {/* Empty States */}
+                                                {viewMode === 'extension_status' && employees.filter(e => e.isActive !== false && e.isProfileActive !== false).length === 0 && (
+                                                    <tr><td colSpan="10" className="p-6 text-center text-gray-500">No employees found to track.</td></tr>
+                                                )}
                                                 {viewMode === 'total' && filteredEmployees.length === 0 && (
                                                     <tr><td colSpan="10" className="p-6 text-center text-gray-500">No employees found.</td></tr>
                                                 )}
-                                                {viewMode === 'present' && employees.filter(e => e.status === "Present").length === 0 && (
+                                                {viewMode === 'active_employees' && filteredEmployees.length === 0 && (
+                                                    <tr><td colSpan="10" className="p-6 text-center text-gray-500">No active employees found.</td></tr>
+                                                )}
+                                                {viewMode === 'present' && filteredEmployees.filter(e => e.status === "Present").length === 0 && (
                                                     <tr><td colSpan="10" className="p-6 text-center text-gray-500">No employees present today.</td></tr>
                                                 )}
-                                                {viewMode === 'absent' && employees.filter(e => e.status === "Absent").length === 0 && (
+                                                {viewMode === 'absent' && employees.filter(e => e.isActive !== false && e.isProfileActive !== false && e.status === "Absent").length === 0 && (
                                                     <tr><td colSpan="10" className="p-6 text-center text-gray-500">No employees absent today.</td></tr>
                                                 )}
                                             </tbody>
@@ -1193,6 +1349,7 @@ const Dashboard = () => {
                                                 {isAttendanceEmployeeDropdownOpen && (
                                                     <div className="absolute top-[65px] left-0 w-full bg-white border border-gray-100 rounded-xl shadow-2xl max-h-[200px] overflow-y-auto z-[999] custom-scrollbar">
                                                         {employees.filter(e => {
+                                                            if (e.isActive === false || e.isProfileActive === false) return false;
                                                             const query = attendanceEmployeeSearch.toLowerCase().trim();
                                                             if (!query) return true;
                                                             return e.name?.toLowerCase().includes(query) ||
@@ -1200,6 +1357,7 @@ const Dashboard = () => {
                                                                 (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
                                                         }).length > 0 ? (
                                                             employees.filter(e => {
+                                                                if (e.isActive === false || e.isProfileActive === false) return false;
                                                                 const query = attendanceEmployeeSearch.toLowerCase().trim();
                                                                 if (!query) return true;
                                                                 return e.name?.toLowerCase().includes(query) ||
@@ -1300,8 +1458,7 @@ const Dashboard = () => {
                                                         <thead className="bg-white text-gray-500 text-xs uppercase tracking-wider border-b border-gray-100">
                                                             <tr>
                                                                 <th className="p-4 font-medium">Date</th>
-                                                                <th className="p-4 font-medium">Employee ID</th>
-                                                                <th className="p-4 font-medium">Full Name</th>
+                                                                <th className="p-4 font-medium">Employee</th>
                                                                 <th className="p-4 font-medium">Role</th>
                                                                 <th className="p-4 font-medium">Status</th>
                                                             </tr>
@@ -1311,10 +1468,8 @@ const Dashboard = () => {
                                                                 <tr key={record._id} className="hover:bg-blue-50/30 transition-colors text-sm text-gray-700">
                                                                     <td className="p-4 whitespace-nowrap text-gray-500 font-mono text-xs text-blue-600 cursor-pointer">{record.date}</td>
                                                                     <td className="p-4">
-                                                                        <div className="text-xs text-gray-500 font-mono">{record.employeeId?.employeeId}</div>
-                                                                    </td>
-                                                                    <td className="p-4">
                                                                         <div className="font-bold text-gray-800">{record.employeeId?.name || "Unknown"}</div>
+                                                                        <div className="text-xs text-gray-500 font-mono mt-0.5">{record.employeeId?.employeeId || "-"}</div>
                                                                     </td>
                                                                     <td className="p-4 text-xs text-indigo-600 font-medium">{record.employeeId?.role}</td>
                                                                     <td className="p-4">
@@ -1344,7 +1499,7 @@ const Dashboard = () => {
                                                     <table className="w-full text-left border-collapse">
                                                         <thead className="bg-white text-gray-500 text-xs uppercase tracking-wider border-b border-gray-100">
                                                             <tr>
-                                                                <th className="p-4 font-medium">Full Name</th>
+                                                                <th className="p-4 font-medium">Employee</th>
                                                                 <th className="p-4 font-medium text-center bg-slate-100/40">Login Time</th>
                                                                 <th className="p-4 font-medium text-center bg-slate-100/40">Logout Time</th>
                                                                 <th className="p-4 font-medium text-center text-rose-600 bg-slate-100/40">Inactive Hours</th>
@@ -1359,9 +1514,21 @@ const Dashboard = () => {
                                                             {records.map(recordData => {
                                                                 const emp = recordData.employeeId;
                                                                 return (
-                                                                    <tr key={`${recordData._id}`} className="hover:bg-blue-50/30 transition-colors text-sm text-gray-700">
+                                                                    <tr
+                                                                        key={`${recordData._id}`}
+                                                                        className="hover:bg-blue-50 transition-colors text-sm text-gray-700 cursor-pointer group"
+                                                                        onClick={() => {
+                                                                            setSelectedDayLogInfo({
+                                                                                employeeId: emp?._id,
+                                                                                employeeName: emp?.name,
+                                                                                date: recordData.date
+                                                                            });
+                                                                            setIsDayLogsModalOpen(true);
+                                                                        }}
+                                                                    >
                                                                         <td className="p-4">
                                                                             <div className="font-bold text-gray-800">{emp?.name || "Unknown"}</div>
+                                                                            <div className="text-xs text-gray-500 font-mono mt-0.5">{emp?.employeeId || "-"}</div>
                                                                             <div className="flex flex-wrap gap-1 mt-1">
                                                                                 {Array.isArray(emp?.role) ? emp.role.map((r, i) => (
                                                                                     <span key={i} className="px-2 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-100 whitespace-normal">
@@ -1500,6 +1667,7 @@ const Dashboard = () => {
                                             {isTaskEmployeeDropdownOpen && (
                                                 <div className="absolute top-[65px] left-0 w-full bg-white border border-gray-100 rounded-xl shadow-2xl max-h-[200px] overflow-y-auto z-[999] custom-scrollbar">
                                                     {employees.filter(e => {
+                                                        if (e.isActive === false || e.isProfileActive === false) return false;
                                                         const query = taskEmployeeSearch.toLowerCase().trim();
                                                         if (!query) return true;
                                                         return e.name?.toLowerCase().includes(query) ||
@@ -1507,6 +1675,7 @@ const Dashboard = () => {
                                                             (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
                                                     }).length > 0 ? (
                                                         employees.filter(e => {
+                                                            if (e.isActive === false || e.isProfileActive === false) return false;
                                                             const query = taskEmployeeSearch.toLowerCase().trim();
                                                             if (!query) return true;
                                                             return e.name?.toLowerCase().includes(query) ||
@@ -1604,13 +1773,18 @@ const Dashboard = () => {
                                                                 <table className="w-full text-left border-collapse min-w-[1000px] table-fixed">
                                                                     <thead>
                                                                         <tr className="bg-gray-50/50 text-left border-b border-gray-200">
-                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[5%] text-center">S.No</th>
-                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%]">Assigned By & To</th>
-                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%]">Project Name</th>
-                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[25%]">Description</th>
-                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[10%]">Priority</th>
-                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[10%]">Status</th>
-                                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[8%] text-center">Chats</th>
+                                                                            <th className="px-6 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[5%] text-center">T.No</th>
+                                                                            {!appliedTaskFilters.assignedTo && (
+                                                                                <th className="px-6 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[12%]">Assigned By & To</th>
+                                                                            )}
+                                                                            {!appliedTaskFilters.projectName && (
+                                                                                <th className="px-6 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[12%]">Project Name</th>
+                                                                            )}
+                                                                            <th className="px-6 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[18%]">Description</th>
+                                                                            <th className="px-6 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[10%]">Priority</th>
+                                                                            <th className="px-6 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[10%]">Status</th>
+                                                                            <th className="px-6 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[5%] text-center">Chats</th>
+                                                                            <th className="px-6 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[5%] text-center">Edit</th>
                                                                         </tr>
                                                                     </thead>
                                                                     <tbody className="divide-y divide-gray-100">
@@ -1623,7 +1797,7 @@ const Dashboard = () => {
                                                                                 <td className="px-6 py-4 align-middle text-center w-[5%]">
                                                                                     <div className="flex flex-col items-center justify-center gap-1.5">
                                                                                         <span className="text-gray-400 font-mono text-xs font-medium">
-                                                                                            {(index + 1).toString().padStart(2, '0')}
+                                                                                            {(tasksInGroup.length - index).toString().padStart(2, '0')}
                                                                                         </span>
                                                                                         <div
                                                                                             className={`w-2 h-2 rounded-sm shadow-sm ${task.logType === 'Offline Task' || task.isPendingOffline
@@ -1636,28 +1810,18 @@ const Dashboard = () => {
                                                                                 </td>
 
                                                                                 {/* Assigned By & To */}
-                                                                                <td className="px-6 py-4 align-middle">
-                                                                                    <div className="flex flex-col gap-1.5">
-                                                                                        <div className="flex items-center gap-2">
-                                                                                            <span className="text-[10px] uppercase font-bold text-gray-400 w-6">By:</span>
-                                                                                            <span className="text-xs font-bold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full truncate max-w-[120px]" title={task.assignedBy?.name}>
-                                                                                                {task.assignedBy?.name || "Admin"}
-                                                                                            </span>
-                                                                                        </div>
-                                                                                        <div className="flex items-center gap-2">
-                                                                                            <span className="text-[10px] uppercase font-bold text-gray-400 w-6">To:</span>
-                                                                                            <div className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full truncate max-w-[150px]" title={(() => {
-                                                                                                let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
-                                                                                                if (!targets || targets.length === 0) {
-                                                                                                    return task.assignType === "Overall" ? "Overall (All)" : "Unassigned";
-                                                                                                }
-                                                                                                return targets.map(assigneeId => {
-                                                                                                    if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
-                                                                                                    const emp = employees.find(e => e._id === assigneeId);
-                                                                                                    return emp ? emp.name : assigneeId;
-                                                                                                }).join(", ");
-                                                                                            })()}>
-                                                                                                {(() => {
+                                                                                {!appliedTaskFilters.assignedTo && (
+                                                                                    <td className="px-6 py-4 align-middle">
+                                                                                        <div className="flex flex-col gap-1.5">
+                                                                                            <div className="flex items-center gap-2">
+                                                                                                <span className="text-[10px] uppercase font-bold text-gray-400 w-6">By:</span>
+                                                                                                <span className="text-xs font-bold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full truncate max-w-[120px]" title={task.assignedBy?.name}>
+                                                                                                    {task.assignedBy?.name || "Admin"}
+                                                                                                </span>
+                                                                                            </div>
+                                                                                            <div className="flex items-center gap-2">
+                                                                                                <span className="text-[10px] uppercase font-bold text-gray-400 w-6">To:</span>
+                                                                                                <div className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full truncate max-w-[150px]" title={(() => {
                                                                                                     let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
                                                                                                     if (!targets || targets.length === 0) {
                                                                                                         return task.assignType === "Overall" ? "Overall (All)" : "Unassigned";
@@ -1667,21 +1831,35 @@ const Dashboard = () => {
                                                                                                         const emp = employees.find(e => e._id === assigneeId);
                                                                                                         return emp ? emp.name : assigneeId;
                                                                                                     }).join(", ");
-                                                                                                })()}
+                                                                                                })()}>
+                                                                                                    {(() => {
+                                                                                                        let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
+                                                                                                        if (!targets || targets.length === 0) {
+                                                                                                            return task.assignType === "Overall" ? "Overall (All)" : "Unassigned";
+                                                                                                        }
+                                                                                                        return targets.map(assigneeId => {
+                                                                                                            if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
+                                                                                                            const emp = employees.find(e => e._id === assigneeId);
+                                                                                                            return emp ? emp.name : assigneeId;
+                                                                                                        }).join(", ");
+                                                                                                    })()}
+                                                                                                </div>
                                                                                             </div>
                                                                                         </div>
-                                                                                    </div>
-                                                                                </td>
+                                                                                    </td>
+                                                                                )}
 
                                                                                 {/* Project Name */}
-                                                                                <td className="px-6 py-4 text-sm font-bold text-gray-800 truncate align-middle" title={task.projectName}>
-                                                                                    {task.projectName}
-                                                                                </td>
+                                                                                {!appliedTaskFilters.projectName && (
+                                                                                    <td className="px-6 py-4 text-sm font-bold text-gray-600 truncate align-middle" title={task.projectName}>
+                                                                                        {task.projectName}
+                                                                                    </td>
+                                                                                )}
 
                                                                                 {/* Description */}
                                                                                 <td className="px-6 py-4 align-middle">
                                                                                     <div className="flex flex-col gap-1.5 items-start">
-                                                                                        <span className="text-sm font-medium text-gray-600 truncate max-w-[300px]" title={task.description || task.taskTitle}>
+                                                                                        <span className="text-sm font-medium text-gray-600 line-clamp-2 whitespace-normal break-words max-w-full" title={task.description || task.taskTitle}>
                                                                                             {task.description || task.taskTitle}
                                                                                         </span>
                                                                                     </div>
@@ -1689,12 +1867,15 @@ const Dashboard = () => {
 
                                                                                 {/* Priority */}
                                                                                 <td className="px-6 py-4 align-middle">
-                                                                                    <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold shadow-sm border ${task.priority === "High" ? "bg-rose-50 text-rose-600 border-rose-100" :
-                                                                                        task.priority === "Medium" ? "bg-amber-50 text-amber-600 border-amber-100" :
-                                                                                            "bg-emerald-50 text-emerald-600 border-emerald-100"
+                                                                                    <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold shadow-sm border ${task.priority === "Very High" ? "bg-rose-50 text-rose-600 border-rose-100" :
+                                                                                        task.priority === "High" ? "bg-orange-50 text-orange-600 border-orange-100" :
+                                                                                            task.priority === "Medium" ? "bg-amber-50 text-amber-600 border-amber-100" :
+                                                                                                task.priority === "Low" ? "bg-blue-50 text-blue-600 border-blue-100" :
+                                                                                                    task.priority === "Very Low" ? "bg-gray-50 text-gray-500 border-gray-100" :
+                                                                                                        "bg-gray-50 text-gray-600 border-gray-100"
                                                                                         }`}>
-                                                                                        {task.priority === "High" && <FaExclamationCircle className="mr-1.5 text-[10px]" />}
-                                                                                        {task.priority || "Normal"}
+                                                                                        {(task.priority === "High" || task.priority === "Very High") && <FaExclamationCircle className="mr-1.5 text-[10px]" />}
+                                                                                        {task.priority || "Medium"}
                                                                                     </span>
                                                                                 </td>
 
@@ -1724,6 +1905,17 @@ const Dashboard = () => {
                                                                                         title="Open Chat"
                                                                                     >
                                                                                         <FaPaperPlane size={14} />
+                                                                                    </button>
+                                                                                </td>
+
+                                                                                {/* Action */}
+                                                                                <td className="px-6 py-4 text-center align-middle">
+                                                                                    <button
+                                                                                        onClick={(e) => { e.stopPropagation(); setConfirmNavigation(task); }}
+                                                                                        className="inline-flex items-center justify-center h-9 w-9 text-blue-500 bg-white border border-gray-200 hover:bg-blue-50 hover:text-blue-600 rounded-full transition-all shadow-sm hover:shadow active:scale-95 group-hover:border-blue-200"
+                                                                                        title="Navigate to Task Page"
+                                                                                    >
+                                                                                        <FaExternalLinkAlt size={14} />
                                                                                     </button>
                                                                                 </td>
                                                                             </tr>
@@ -1771,7 +1963,8 @@ const Dashboard = () => {
                                                         <td className="p-4 text-center text-gray-400 font-mono text-xs">{(index + 1).toString().padStart(2, '0')}</td>
                                                         <td className="p-4">
                                                             <div className="font-bold text-gray-800">{leave.employeeId?.name || "Unknown"}</div>
-                                                            <div className="text-xs text-gray-500">{leave.employeeId?.role}</div>
+                                                            <div className="text-xs text-gray-500 font-mono mt-0.5">{leave.employeeId?.employeeId || "-"}</div>
+                                                            <div className="text-xs text-gray-500 mt-0.5">{leave.employeeId?.role}</div>
                                                         </td>
                                                         <td className="p-4">
                                                             <span className="font-medium text-indigo-600">{leave.leaveCategory}</span>
@@ -1867,6 +2060,7 @@ const Dashboard = () => {
                                             {isLeaveEmployeeDropdownOpen && (
                                                 <div className="absolute top-[65px] left-0 w-full bg-white border border-gray-100 rounded-xl shadow-2xl max-h-[200px] overflow-y-auto z-[999] custom-scrollbar">
                                                     {employees.filter(e => {
+                                                        if (e.isActive === false || e.isProfileActive === false) return false;
                                                         const query = leaveEmployeeSearch.toLowerCase().trim();
                                                         if (!query) return true;
                                                         return e.name?.toLowerCase().includes(query) ||
@@ -1874,6 +2068,7 @@ const Dashboard = () => {
                                                             (Array.isArray(e.role) ? e.role.some(r => r.trim().toLowerCase().includes(query)) : e.role?.trim().toLowerCase().includes(query));
                                                     }).length > 0 ? (
                                                         employees.filter(e => {
+                                                            if (e.isActive === false || e.isProfileActive === false) return false;
                                                             const query = leaveEmployeeSearch.toLowerCase().trim();
                                                             if (!query) return true;
                                                             return e.name?.toLowerCase().includes(query) ||
@@ -2156,6 +2351,81 @@ const Dashboard = () => {
                             </div>
                         </div>
                     )}
+
+                    {/* Confirmation Modal */}
+                    {confirmNavigation && (
+                        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/60 backdrop-blur-sm transition-opacity duration-300">
+                            <div className="bg-white rounded-[20px] shadow-2xl p-8 w-full max-w-[400px] transform transition-all scale-100 opacity-100 flex flex-col items-center text-center">
+
+                                {confirmNavigation.status === "Pending" ? (
+                                    <>
+                                        <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-blue-50 mb-5 shadow-inner border border-blue-100/50">
+                                            <FaExternalLinkAlt className="text-blue-600 text-2xl" />
+                                        </div>
+                                        <h3 className="text-[22px] font-bold text-slate-800 mb-2 tracking-tight">Edit Task ?</h3>
+                                        <p className="text-[15px] text-slate-500 mb-8 leading-relaxed px-2">
+                                            Do you want to navigate to the page to edit this <span className="font-semibold text-slate-700">{confirmNavigation.taskType || "task"}</span>?
+                                        </p>
+
+                                        <div className="flex justify-center gap-4 w-full">
+                                            <button
+                                                onClick={() => setConfirmNavigation(null)}
+                                                className="px-6 py-3 text-[15px] font-bold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-all duration-200 flex-1 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-2"
+                                            >
+                                                Cancel
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    const type = confirmNavigation.taskType || "Individual Task";
+                                                    if (type.toLowerCase().includes("group")) {
+                                                        navigate(`/assign-group-task`, { state: { taskToEdit: confirmNavigation } });
+                                                    } else {
+                                                        navigate(`/assign-task`, { state: { taskToEdit: confirmNavigation } });
+                                                    }
+                                                    setConfirmNavigation(null);
+                                                }}
+                                                className="px-6 py-3 text-[15px] font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-all duration-200 shadow-md hover:shadow-lg flex-1 transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                                            >
+                                                Yes, Edit
+                                            </button>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-rose-50 mb-5 shadow-inner border border-rose-100/50">
+                                            <FaExclamationCircle className="text-rose-500 text-2xl" />
+                                        </div>
+                                        <h3 className="text-[22px] font-extrabold text-slate-800 mb-2 tracking-tight">Editing Restricted</h3>
+
+                                        <div className="w-full bg-amber-50/80 rounded-xl p-4 border border-amber-200/60 mb-8 mt-2 relative overflow-hidden">
+                                            <div className="absolute top-0 left-0 w-1 h-full bg-amber-400"></div>
+                                            <p className="text-[14px] text-amber-800 font-medium leading-relaxed">
+                                                You are already working on this task, so it cannot be updated at this time.
+                                            </p>
+                                        </div>
+
+                                        <div className="flex justify-center w-full">
+                                            <button
+                                                onClick={() => setConfirmNavigation(null)}
+                                                className="px-6 py-3 text-[15px] font-bold text-white bg-slate-800 rounded-xl hover:bg-slate-900 transition-all duration-200 shadow-md hover:shadow-lg w-full transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-slate-700 focus:ring-offset-2"
+                                            >
+                                                Acknowledge
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Employee Day Logs Modal */}
+                    <EmployeeDayLogsModal
+                        isOpen={isDayLogsModalOpen}
+                        onClose={() => setIsDayLogsModalOpen(false)}
+                        employeeId={selectedDayLogInfo.employeeId}
+                        employeeName={selectedDayLogInfo.employeeName}
+                        date={selectedDayLogInfo.date}
+                    />
 
                     {/* Task Details Modal */}
                     {

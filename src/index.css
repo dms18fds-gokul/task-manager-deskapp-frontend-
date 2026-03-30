@@ -24,25 +24,46 @@
     }
 
     .emoji-picker-container .epr-body {
-        -ms-overflow-style: none; /* IE and Edge */
-        scrollbar-width: none; /* Firefox */
+        -ms-overflow-style: none;
+        /* IE and Edge */
+        scrollbar-width: none;
+        /* Firefox */
     }
 
-    /* Custom Scrollbar */
+    /* Custom Scrollbar - Global & Utilities */
+    ::-webkit-scrollbar,
     .custom-scrollbar::-webkit-scrollbar {
-        height: 6px;
-        width: 6px;
+        height: 10px;
+        width: 10px;
     }
+
+    ::-webkit-scrollbar-track,
     .custom-scrollbar::-webkit-scrollbar-track {
         background: #f1f5f9;
-        border-radius: 4px;
+        border-radius: 8px;
     }
+
+    ::-webkit-scrollbar-thumb,
     .custom-scrollbar::-webkit-scrollbar-thumb {
-        background: #cbd5e1;
-        border-radius: 4px;
-    }
-    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
         background: #94a3b8;
+        border-radius: 8px;
+        /* Creates an inset padding look so the scrollbar doesn't hug the edge raw */
+        border: 2px solid #f1f5f9;
+    }
+
+    ::-webkit-scrollbar-thumb:hover,
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: #64748b;
+    }
+
+    /* Responsive Table Wrapper */
+    .responsive-table-container {
+        @apply w-full overflow-x-auto scrollbar-hide;
+    }
+
+    /* Responsive Modal Utility */
+    .responsive-modal-content {
+        @apply w-[calc(100%-2rem)] max-w-lg mx-auto md:w-full;
     }
 }
 
@@ -110,10 +131,82 @@ li {
     50% { transform: scale(1.05); opacity: 0.8; }
 }
 
+@keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes zoom-in {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slide-up {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
 .animate-spin-gradient {
     animation: spin-gradient 1.5s linear infinite;
 }
 
 .animate-pulse-subtle {
     animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+.animate-fade-in {
+    animation: fade-in 0.4s ease-out forwards;
+}
+
+.animate-zoom-in {
+    animation: zoom-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.animate-slide-up {
+    animation: slide-up 0.5s ease-out forwards;
+}
+
+@keyframes fade-in-up {
+    from { transform: translateY(10px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes fade-in-down {
+    from { transform: translateY(-10px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes scale-in {
+    from { transform: scale(0.9); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes width-in {
+    from { width: 0; }
+    to { width: 100%; }
+}
+
+.animate-fade-in-up {
+    animation: fade-in-up 0.3s ease-out forwards;
+}
+
+.animate-fade-in-down {
+    animation: fade-in-down 0.3s ease-out forwards;
+}
+
+.animate-scale-in {
+    animation: scale-in 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.animate-width-in {
+    animation: width-in 0.3s ease-out forwards;
+}
+
+@keyframes slide-in-right {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+.animate-slide-in-right {
+    animation: slide-in-right 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }

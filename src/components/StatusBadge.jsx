@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { FaChevronDown } from "react-icons/fa";
 
-const StatusBadge = ({ status, onChange }) => {
+const StatusBadge = ({ status, onChange, readOnly = false }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [position, setPosition] = useState({ top: 0, left: 0 });
     const buttonRef = useRef(null);
@@ -10,6 +10,7 @@ const StatusBadge = ({ status, onChange }) => {
 
     // Close when clicking outside
     useEffect(() => {
+        if (readOnly) return;
         const handleClickOutside = (event) => {
             if (buttonRef.current && !buttonRef.current.contains(event.target) &&
                 menuRef.current && !menuRef.current.contains(event.target)) {
@@ -32,10 +33,11 @@ const StatusBadge = ({ status, onChange }) => {
             window.removeEventListener("scroll", handleScroll, true);
             window.removeEventListener("resize", handleScroll);
         };
-    }, [isOpen]);
+    }, [isOpen, readOnly]);
 
     const toggleDropdown = (e) => {
         e.stopPropagation();
+        if (readOnly || status === "Completed") return;
         if (!isOpen && buttonRef.current) {
             const rect = buttonRef.current.getBoundingClientRect();
             setPosition({
@@ -74,6 +76,7 @@ const StatusBadge = ({ status, onChange }) => {
     const currentConfig = getStatusConfig(status);
 
     const handleSelect = (newStatus) => {
+        if (readOnly) return;
         onChange(newStatus);
         setIsOpen(false);
     };
@@ -84,10 +87,12 @@ const StatusBadge = ({ status, onChange }) => {
                 ref={buttonRef}
                 type="button"
                 onClick={toggleDropdown}
-                className={`group flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 outline-none w-30 ${currentConfig.style}`}
+                className={`group flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 outline-none w-30 ${currentConfig.style} ${(readOnly || status === "Completed") ? "cursor-default" : ""}`}
             >
                 <span className="truncate">{currentConfig.label}</span>
-                <FaChevronDown className={`text-[10px] opacity-50 transition-transform duration-200 group-hover:opacity-100 ${isOpen ? "rotate-180" : ""}`} />
+                {!(readOnly || status === "Completed") && (
+                    <FaChevronDown className={`text-[10px] opacity-50 transition-transform duration-200 group-hover:opacity-100 ${isOpen ? "rotate-180" : ""}`} />
+                )}
             </button>
 
             {isOpen && createPortal(
@@ -101,23 +106,36 @@ const StatusBadge = ({ status, onChange }) => {
                     }}
                     className="w-32 bg-white rounded-lg shadow-xl border border-gray-100 py-1 animate-fade-in-down"
                 >
-                    {["In Progress", "Hold", "Completed"].map((opt) => {
-                        if (opt === status) return null;
-                        const config = getStatusConfig(opt);
-                        return (
-                            <button
-                                key={opt}
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleSelect(opt);
-                                }}
-                                className={`w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors flex items-center gap-2`}
-                            >
-                                <span className={`w-2 h-2 rounded-full ${opt === "In Progress" ? "bg-blue-500" : opt === "Hold" ? "bg-amber-500" : "bg-emerald-500"}`}></span>
-                                {opt}
-                            </button>
-                        );
-                    })}
+                    {(() => {
+                        let options = [];
+                        if (status === "In Progress") {
+                            options = ["Hold", "Completed"];
+                        } else if (status === "Hold") {
+                            options = ["In Progress"];
+                        } else if (status === "Completed") {
+                            options = [];
+                        } else {
+                            // Fallback for other statuses (e.g. Pending, Overdue)
+                            options = ["In Progress", "Hold", "Completed"].filter(opt => opt !== status);
+                        }
+
+                        return options.map((opt) => {
+                            const config = getStatusConfig(opt);
+                            return (
+                                <button
+                                    key={opt}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleSelect(opt);
+                                    }}
+                                    className={`w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors flex items-center gap-2`}
+                                >
+                                    <span className={`w-2 h-2 rounded-full ${opt === "In Progress" ? "bg-blue-500" : opt === "Hold" ? "bg-amber-500" : "bg-emerald-500"}`}></span>
+                                    {opt}
+                                </button>
+                            );
+                        });
+                    })()}
                 </div>,
                 document.body
             )}

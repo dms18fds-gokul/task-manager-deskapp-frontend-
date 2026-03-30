@@ -6,15 +6,23 @@ import DownloadDropdown from "../components/DownloadDropdown";
 import CustomDropdown from "../components/CustomDropdown";
 import QuickTaskForm from "../components/QuickTaskForm.jsx";
 import LogDetailsModal from "../components/LogDetailsModal";
+import TableLoader from '../components/TableLoader';
 
 const LogTime = () => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [isTableLoading, setIsTableLoading] = useState(true);
     const [selectedLog, setSelectedLog] = useState(null); // For popup details
     const [isPopupOpen, setIsPopupOpen] = useState(false);
+    const [logFormMode, setLogFormMode] = useState("Quick"); // "Quick" or "Meeting"
 
     // Edit Modal State
     const [editingLog, setEditingLog] = useState(null);
+
+    const [conflictingTask, setConflictingTask] = useState(null);
+    const [showHoldConfirmation, setShowHoldConfirmation] = useState(false);
+    const [pendingActionLogId, setPendingActionLogId] = useState(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const [popupPosition, setPopupPosition] = useState(null); // To create a menu near the click if needed, but requirements say "popup opens" -> Modal usually.
     // The requirement says "When that icon is clicked, a popup should open. In that popup, it should show..." -> This implies a Modal.
@@ -54,11 +62,13 @@ const LogTime = () => {
         };
 
         window.addEventListener('offlineTaskSynced', handleOfflineUpdate);
-        window.addEventListener('offlineTaskAdded', handleOfflineUpdate); // If we add this event when saving offline
+        window.addEventListener('offlineTaskAdded', handleOfflineUpdate);
+        window.addEventListener('refreshLogs', handleOfflineUpdate);
 
         return () => {
             window.removeEventListener('offlineTaskSynced', handleOfflineUpdate);
             window.removeEventListener('offlineTaskAdded', handleOfflineUpdate);
+            window.removeEventListener('refreshLogs', handleOfflineUpdate);
         };
     }, [user]);
 
@@ -129,6 +139,7 @@ const LogTime = () => {
 
     const fetchRecentLogs = async () => {
         if (!user) return;
+        setIsTableLoading(true);
 
         let serverData = [];
         let fetchSuccess = false;
@@ -140,7 +151,6 @@ const LogTime = () => {
                 fetchSuccess = true;
             }
         } catch (error) {
-            console.error("Error fetching logs:", error);
         }
 
         // Merge with offline pending tasks from localStorage
@@ -159,7 +169,6 @@ const LogTime = () => {
                         logType: "Offline Task Pending"
                     }));
             } catch (e) {
-                console.error("Error parsing offline tasks", e);
             }
         }
 
@@ -167,6 +176,12 @@ const LogTime = () => {
             return [...data].sort((a, b) => {
                 const dateDiff = new Date(b.date) - new Date(a.date);
                 if (dateDiff !== 0) return dateDiff;
+                
+                // Sort by time descending (newest at top)
+                const timeA = a.startTime || "00:00";
+                const timeB = b.startTime || "00:00";
+                if (timeA !== timeB) return timeB.localeCompare(timeA);
+
                 const taskA = parseInt(a.taskNo || "0", 10);
                 const taskB = parseInt(b.taskNo || "0", 10);
                 return taskB - taskA;
@@ -184,6 +199,7 @@ const LogTime = () => {
                 return applySort(combinedData);
             });
         }
+        setTimeout(() => setIsTableLoading(false), 500);
     };
 
     // Fetch options from new API
@@ -204,13 +220,24 @@ const LogTime = () => {
             if (typeRes.ok) setTypes(await typeRes.json());
 
         } catch (error) {
-            console.error("Error fetching options:", error);
         }
     };
 
     useEffect(() => {
         fetchOptions();
         fetchRecentLogs();
+    }, []);
+
+    useEffect(() => {
+        const handleClose = () => setActiveDropdownLogId(null);
+        window.addEventListener('scroll', handleClose, true);
+        window.addEventListener('resize', handleClose);
+        document.addEventListener('click', handleClose);
+        return () => {
+            window.removeEventListener('scroll', handleClose, true);
+            window.removeEventListener('resize', handleClose);
+            document.removeEventListener('click', handleClose);
+        };
     }, []);
 
     // Helper to format time to 12-hour AM/PM
@@ -225,7 +252,6 @@ const LogTime = () => {
 
     // ... durations helpers ...
     const calculateDurationStr = (start, end) => {
-        // ... same ...
         if (!start || !end) return "";
         const [startHours, startMins, startSecs = 0] = start.split(':').map(Number);
         const [endHours, endMins, endSecs = 0] = end.split(':').map(Number);
@@ -242,15 +268,8 @@ const LogTime = () => {
         const hours = Math.floor(diff / (1000 * 60 * 60));
         diff -= hours * 1000 * 60 * 60;
         const minutes = Math.floor(diff / (1000 * 60));
-        diff -= minutes * 1000 * 60;
-        const seconds = Math.floor(diff / 1000);
 
-        let durationString = "";
-        if (hours > 0) durationString += `${hours} hr${hours > 1 ? 's' : ''} `;
-        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''} `;
-        if (seconds > 0) durationString += `${seconds} sec${seconds > 1 ? 's' : ''}`;
-
-        return durationString.trim() || "0 sec";
+        return `${hours} hr ${minutes} min`;
     };
 
     // Auto-calculate duration
@@ -326,7 +345,6 @@ const LogTime = () => {
                 alert("Failed to add option. It may already exist.");
             }
         } catch (error) {
-            console.error("Error adding option:", error);
         }
     };
 
@@ -361,7 +379,6 @@ const LogTime = () => {
                 alert("Failed to delete option.");
             }
         } catch (error) {
-            console.error("Error deleting option:", error);
         }
     };
 
@@ -417,7 +434,6 @@ const LogTime = () => {
                 alert(data.message || "Failed to add log");
             }
         } catch (error) {
-            console.error("Error adding log:", error);
             alert("Server error");
         } finally {
             setLoading(false);
@@ -426,7 +442,6 @@ const LogTime = () => {
 
     // Edit functions
     const openEditForm = (log) => {
-        console.log("Edit icon clicked, log data received in openEditForm:", log);
         setEditingLog(log);
         setShowForm(true);
         setActiveDropdownLogId(null);
@@ -507,11 +522,13 @@ const LogTime = () => {
     const sortedDates = Object.keys(groupedLogs).sort((a, b) => new Date(b) - new Date(a));
 
     // Action Popup Handler
-    const handleActionClick = (log, index) => {
+    const handleActionClick = (log) => {
         // Find logs for this date to determine index
-        const dayLogs = recentLogs.filter(l => l.date === log.date).sort((a, b) => a.startTime.localeCompare(b.startTime));
-        const taskIndex = dayLogs.findIndex(l => l._id === log._id);
+        const dayLogs = recentLogs
+            .filter(l => l.date === log.date)
+            .sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""));
 
+        const taskIndex = dayLogs.findIndex(l => l._id === log._id);
         setSelectedLog({ ...log, displayTaskNo: (taskIndex + 1).toString().padStart(2, '0') });
         setIsPopupOpen(true);
     };
@@ -549,10 +566,31 @@ const LogTime = () => {
     }, 0);
 
     const [activeDropdownLogId, setActiveDropdownLogId] = useState(null);
+    const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
     const [showReworkPopup, setShowReworkPopup] = useState(false);
     const [pendingReworkLog, setPendingReworkLog] = useState(null);
 
     const updateLogStatus = async (logId, newStatus, extraData = {}) => {
+        // Auto-Hold Check: If switching TO "In Progress"
+        if (newStatus === "In Progress") {
+            try {
+                const res = await fetch(`${API_URL}/tasks/check/active?userId=${user._id}`);
+                const data = await res.json();
+
+                if (data.hasActiveTask && data.task._id !== logId) {
+                    setConflictingTask(data.task);
+                    setPendingActionLogId(logId);
+                    setShowHoldConfirmation(true);
+                    return;
+                }
+            } catch (error) {
+            }
+        }
+
+        await performLogStatusUpdate(logId, newStatus, extraData);
+    };
+
+    const performLogStatusUpdate = async (logId, newStatus, extraData = {}) => {
         try {
             const res = await fetch(`${API_URL}/work-logs/${logId}`, {
                 method: "PUT",
@@ -572,19 +610,56 @@ const LogTime = () => {
                 alert("Failed to update status.");
             }
         } catch (error) {
-            console.error("Error updating status:", error);
             alert("Error updating status.");
         } finally {
             setActiveDropdownLogId(null);
         }
     };
 
+    const confirmSwitchToNewTask = async () => {
+        if (!conflictingTask || !pendingActionLogId) return;
+        if (isSubmitting) return;
+
+        setIsSubmitting(true);
+        try {
+            // 1. Put current task on Hold
+            let resHold;
+            if (conflictingTask.type === "Main Task") {
+                resHold = await fetch(`${API_URL}/tasks/${conflictingTask._id}/status`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ status: "Hold", userId: user._id }),
+                });
+            } else {
+                // Quick Task / Meeting
+                resHold = await fetch(`${API_URL}/work-logs/${conflictingTask._id}`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ status: "Hold" }),
+                });
+            }
+
+            if (resHold.ok) {
+                // 2. Perform the pending status update
+                await performLogStatusUpdate(pendingActionLogId, "In Progress", { endTime: null });
+
+                setShowHoldConfirmation(false);
+                setConflictingTask(null);
+                setPendingActionLogId(null);
+            } else {
+                alert("Failed to put current task on Hold. Operation cancelled.");
+            }
+        } catch (error) {
+            alert("Error switching tasks");
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
     const formatTotalDuration = (totalMinutes) => {
-        const totalSeconds = Math.round(totalMinutes * 60);
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds % 3600) / 60);
-        const seconds = totalSeconds % 60;
-        return `${hours} Hrs ${minutes} Mins ${seconds} Sec.`;
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = Math.floor(totalMinutes % 60);
+        return `${hours} hr ${minutes} min`;
     };
 
     // Define columns for download
@@ -603,13 +678,32 @@ const LogTime = () => {
 
     return (
         <div className="flex h-screen overflow-hidden bg-gray-100 font-sans relative">
+            {/* Desktop Sidebar */}
             <EmployeeSidebar className="hidden md:flex" />
 
-            <div className="flex-1 flex flex-col h-screen overflow-hidden">
-                <header className="bg-white shadow-sm p-4 flex justify-between items-center md:hidden z-10">
-                    <h1 className="text-xl font-bold text-gray-800">UserPanel</h1>
-                    <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="text-gray-600 focus:outline-none p-2 rounded hover:bg-gray-100">
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+            {/* Mobile Sidebar Overlay */}
+            {isSidebarOpen && (
+                <div className="fixed inset-0 z-40 md:hidden">
+                    {/* Backdrop */}
+                    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)}></div>
+                    {/* Sidebar container */}
+                    <div className="absolute inset-y-0 left-0 z-50">
+                        <EmployeeSidebar className="flex h-full shadow-2xl" onClose={() => setIsSidebarOpen(false)} />
+                    </div>
+                </div>
+            )}
+
+            <div className="flex-1 min-w-0 flex flex-col h-screen overflow-hidden">
+                {/* Mobile Header */}
+                <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center md:hidden z-10 sticky top-0">
+                    <h1 className="text-xl font-bold text-gray-800 uppercase tracking-tight">Log Time</h1>
+                    <button
+                        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                        className="p-2 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors border border-gray-200"
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
                     </button>
                 </header>
 
@@ -642,8 +736,20 @@ const LogTime = () => {
 
                     {/* Header & Add Button */}
                     <div className="flex justify-between items-center mb-6">
-                        <h2 className="text-2xl font-bold text-gray-800">My Work Logs & QT</h2>
+                        <h2 className="text-2xl font-bold text-gray-800 uppercase tracking-wider">TASK ACTIVITY LOG & QT</h2>
                         <div className="flex gap-2">
+                            <button
+                                onClick={() => { setLogFormMode("Quick"); setShowForm(true); setEditingLog(null); }}
+                                className="uppercase bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center gap-2 shadow-sm active:scale-95"
+                            >
+                                <FaPlus className="text-xs" /> QT Form
+                            </button>
+                            <button
+                                onClick={() => { setLogFormMode("Meeting"); setShowForm(true); setEditingLog(null); }}
+                                className="uppercase bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center gap-2 shadow-sm active:scale-95"
+                            >
+                                <FaPlus className="text-xs" /> Meeting Form
+                            </button>
                             {user?.role === "Super Admin" && (
                                 <DownloadDropdown
                                     data={filteredLogs}
@@ -651,15 +757,6 @@ const LogTime = () => {
                                     columns={downloadColumns}
                                 />
                             )}
-                            <button
-                                onClick={() => {
-                                    setEditingLog(null);
-                                    setShowForm(true);
-                                }}
-                                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm"
-                            >
-                                <FaPlus /> Quick Task
-                            </button>
                         </div>
                     </div>
 
@@ -721,6 +818,8 @@ const LogTime = () => {
                                     const defaultApplied = { fromDate: tStr, toDate: tStr, projectName: "", taskOwner: "", taskType: "", status: "" };
                                     setFilters(defaultFilters);
                                     setAppliedFilters(defaultApplied);
+                                    setIsTableLoading(true);
+                                    setTimeout(() => setIsTableLoading(false), 1000);
                                 }}
                                 className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 px-4 py-2.5 rounded-lg transition-all shadow-sm active:scale-95 flex items-center justify-center font-bold"
                                 title="Reset Filters"
@@ -736,29 +835,34 @@ const LogTime = () => {
                         </div>
                     </div>
 
-                    {/* Sidebar Form Overlay */}
-                    <div className={`fixed inset-y-0 right-0 w-[460px] bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${showForm ? 'translate-x-0' : 'translate-x-full'}`}>
+                    {/* Popup Form Overlay - Fixed height to enable internal scrolling */}
+                    <div className={`fixed bottom-6 right-6 w-full max-w-[460px] h-[85vh] bg-white shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] z-50 rounded-2xl border border-gray-100 overflow-hidden transform transition-all duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${showForm ? 'scale-100 opacity-100 translate-y-0' : 'scale-95 opacity-0 translate-y-10 pointer-events-none'}`}>
                         {showForm && (
-                            <QuickTaskForm
-                                key={editingLog ? editingLog._id : 'new-form'}
-                                user={user}
-                                editLog={editingLog}
-                                onClose={() => {
-                                    setShowForm(false);
-                                    setEditingLog(null);
-                                }}
-                                onSuccess={() => {
-                                    fetchRecentLogs();
-                                    setShowForm(false);
-                                    setEditingLog(null);
-                                }}
-                            />
+                            <div className="h-full flex flex-col">
+                                <QuickTaskForm
+                                    key={showForm ? (editingLog ? editingLog._id : `new-${logFormMode}`) : 'closed'}
+                                    user={user}
+                                    editLog={editingLog}
+                                    initialIsMeeting={editingLog ? (editingLog.logType === 'Meeting') : (logFormMode === "Meeting")}
+                                    onClose={() => {
+                                        setShowForm(false);
+                                        setEditingLog(null);
+                                    }}
+                                    onSuccess={() => {
+                                        fetchRecentLogs();
+                                        setShowForm(false);
+                                        setEditingLog(null);
+                                    }}
+                                />
+                            </div>
                         )}
                     </div>
 
                     {/* Full Width Table View with Grouping */}
                     <div className="w-full space-y-8">
-                        {sortedDates.length === 0 ? (
+                        {isTableLoading ? (
+                            <TableLoader />
+                        ) : sortedDates.length === 0 ? (
                             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center text-gray-500">
                                 <p className="text-lg">No logs found matching your criteria.</p>
                                 <button onClick={() => setShowForm(true)} className="mt-4 text-indigo-600 hover:underline">
@@ -778,15 +882,17 @@ const LogTime = () => {
                                         acc.meeting += mins;
                                     } else if (["QT Task", "QT", "Quick"].includes(log.logType)) {
                                         acc.qt += mins;
+                                    } else if (log.logType === 'RT') {
+                                        acc.rt += mins;
                                     } else {
                                         acc.main += mins;
                                     }
 
                                     return acc;
-                                }, { total: 0, meeting: 0, qt: 0, main: 0 });
+                                }, { total: 0, meeting: 0, qt: 0, rt: 0, main: 0 });
 
                                 return (
-                                    <div key={date} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                                    <div key={date} className="bg-white rounded-xl shadow-sm border border-gray-100">
                                         {/* Group Header */}
                                         <div className="px-6 py-4 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
                                             <div className="flex items-center gap-2">
@@ -804,6 +910,10 @@ const LogTime = () => {
                                                     <span className="text-teal-500 font-semibold mr-1">Meeting Hrs:</span>
                                                     <span className="text-teal-700 font-bold">{formatTotalDuration(groupMetrics.meeting)}</span>
                                                 </div>
+                                                <div className="bg-rose-50 px-3 py-1 rounded text-xs border border-rose-100 shadow-sm">
+                                                    <span className="text-rose-500 font-semibold mr-1">RT Hrs:</span>
+                                                    <span className="text-rose-700 font-bold">{formatTotalDuration(groupMetrics.rt)}</span>
+                                                </div>
                                                 <div className="bg-blue-50 px-3 py-1 rounded text-xs border border-blue-100 shadow-sm">
                                                     <span className="text-blue-500 font-semibold mr-1">Main Task Hrs:</span>
                                                     <span className="text-blue-700 font-bold">{formatTotalDuration(groupMetrics.main)}</span>
@@ -819,12 +929,12 @@ const LogTime = () => {
                                             <table className="w-full text-left border-collapse min-w-[1000px] table-fixed">
                                                 <thead>
                                                     <tr className="bg-white text-gray-500 text-xs border-b border-gray-100 uppercase tracking-wider">
-                                                        <th className="p-4 font-semibold w-[8%] text-center text-gray-400">Task No</th>
-                                                        <th className="p-4 font-semibold w-[10%]">Assigned By</th>
-                                                        <th className="p-4 font-semibold w-[15%]">Project</th>
-                                                        <th className="p-4 font-semibold w-[20%]">Description</th>
+                                                        <th className="p-4 font-semibold w-[5%] text-center text-gray-400">S.No</th>
+                                                        <th className="p-4 font-semibold w-[12%]">Assigned By</th>
+                                                        <th className="p-4 font-semibold w-[12%]">Project Name</th>
+                                                        <th className="p-4 font-semibold w-[18%]">Description</th>
                                                         <th className="p-4 font-semibold w-[12%]">Time & Duration</th>
-                                                        <th className="p-4 font-semibold w-[8%] text-center">Status</th>
+                                                        <th className="p-4 font-semibold w-[10%] text-center">Status</th>
                                                         <th className="p-4 font-semibold w-[8%] text-center">Type</th>
                                                         {date === new Date().toISOString().split('T')[0] && (
                                                             <th className="p-4 font-semibold w-[6%] text-center text-indigo-500">Edit</th>
@@ -840,12 +950,12 @@ const LogTime = () => {
                                                             return (
                                                                 <tr
                                                                     key={log._id}
-                                                                    className="hover:bg-gray-50/80 transition-colors group cursor-pointer"
+                                                                    className="hover:bg-gray-50/80 transition-colors group cursor-pointer h-22"
                                                                     onClick={() => handleActionClick(log, index)}
                                                                 >
                                                                     <td className="p-4 text-xs font-bold text-gray-400 text-center">
                                                                         <div className="flex flex-col justify-center items-center gap-1.5 mt-1">
-                                                                            <span>{displayTaskNo}</span>
+                                                                            <span>{(groupedLogs[date].length - index).toString().padStart(2, '0')}</span>
                                                                             <span
                                                                                 className={`w-2 h-2 shrink-0 rounded-[2px] ${log.isPendingOffline || log.logType === 'Offline Task' ? 'bg-red-500' : 'bg-green-500'}`}
                                                                                 title={log.isPendingOffline ? 'Offline Task Pending' : log.logType === 'Offline Task' ? 'Offline Task' : 'Online Task'}
@@ -856,7 +966,7 @@ const LogTime = () => {
                                                                     {/* Assigned By */}
                                                                     <td className="p-4">
                                                                         <div className="flex flex-col">
-                                                                            <span className="text-sm font-bold text-gray-800">
+                                                                            <span className="text-sm font-bold text-gray-800 truncate uppercase" title={log.assignedBy}>
                                                                                 {log.assignedBy || "Unknown"}
                                                                             </span>
                                                                         </div>
@@ -868,16 +978,20 @@ const LogTime = () => {
                                                                             <span className="text-sm font-semibold text-indigo-900 truncate" title={log.projectName}>
                                                                                 {log.projectName}
                                                                             </span>
-                                                                            <span className="text-[10px] text-gray-400 uppercase tracking-wide font-bold mt-0.5 truncate">
-                                                                                {log.taskType}
+                                                                            <span className="text-[10px] text-gray-400 uppercase tracking-wide font-bold mt-0.5 truncate" title={
+                                                                                log.logType === 'Meeting' ? "Discussion" :
+                                                                                (["QT Task", "QT", "Quick", "RT"].includes(log.logType) ? (log.taskType || "Discussion") : (log.taskTitle || "Discussion"))
+                                                                            }>
+                                                                                {log.logType === 'Meeting' ? "Discussion" :
+                                                                                (["QT Task", "QT", "Quick", "RT"].includes(log.logType) ? (log.taskType || "Discussion") : (log.taskTitle || "Discussion"))}
                                                                             </span>
                                                                         </div>
                                                                     </td>
 
                                                                     {/* Description */}
                                                                     <td className="p-4">
-                                                                        <div className="flex flex-col gap-1">
-                                                                            <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed" title={log.description}>
+                                                                        <div className="flex flex-col gap-1 max-h-12 overflow-hidden">
+                                                                            <p className="text-sm text-gray-600 line-clamp-1 leading-relaxed" title={log.description}>
                                                                                 {log.description}
                                                                             </p>
                                                                         </div>
@@ -901,67 +1015,34 @@ const LogTime = () => {
                                                                     <td className="p-4 text-sm relative text-center">
                                                                         {(() => {
                                                                             const isRework = log.status === 'Rework';
-                                                                            const effectiveStatus = (log.status && log.status !== 'In Progress') ? log.status : (log.endTime ? "Completed" : "In Progress");
+                                                                            const isQT = ["QT Task", "QT", "Quick"].includes(log.logType) || ["QT Task", "QT", "Quick"].includes(log.taskType);
+                                                                            const effectiveStatus = (log.status && !['In Progress', 'Pending'].includes(log.status)) ? log.status : (log.endTime ? "Completed" : "In Progress");
 
                                                                             const isHold = effectiveStatus.startsWith('Hold');
                                                                             const isInProgress = effectiveStatus === 'In Progress';
                                                                             const isCompleted = effectiveStatus === 'Completed';
-
-                                                                            // Define dropdown options based on current status
-                                                                            const renderDropdown = () => {
-                                                                                if (activeDropdownLogId !== log._id) return null;
-
-                                                                                return (
-                                                                                    <div className="absolute top-full left-0 mt-1 w-32 bg-white rounded-lg shadow-xl border border-gray-100 z-50 overflow-hidden text-left animate-fade-in-up">
-                                                                                        {isInProgress && (
-                                                                                            <>
-                                                                                                <div onClick={(e) => { e.stopPropagation(); updateLogStatus(log._id, 'Hold'); setActiveDropdownLogId(null); }} className="px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer flex items-center gap-2">
-                                                                                                    <span className="w-2 h-2 rounded-full bg-red-500"></span> Hold
-                                                                                                </div>
-                                                                                                <div onClick={(e) => { e.stopPropagation(); updateLogStatus(log._id, 'Completed'); setActiveDropdownLogId(null); }} className="px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer flex items-center gap-2">
-                                                                                                    <span className="w-2 h-2 rounded-full bg-green-500"></span> Completed
-                                                                                                </div>
-                                                                                            </>
-                                                                                        )}
-                                                                                        {isHold && (
-                                                                                            <>
-                                                                                                <div onClick={(e) => { e.stopPropagation(); updateLogStatus(log._id, 'In Progress', { endTime: null }); setActiveDropdownLogId(null); }} className="px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer flex items-center gap-2">
-                                                                                                    <span className="w-2 h-2 rounded-full bg-indigo-500"></span> In Progress
-                                                                                                </div>
-                                                                                                <div onClick={(e) => { e.stopPropagation(); updateLogStatus(log._id, 'Completed'); setActiveDropdownLogId(null); }} className="px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer flex items-center gap-2">
-                                                                                                    <span className="w-2 h-2 rounded-full bg-green-500"></span> Completed
-                                                                                                </div>
-                                                                                            </>
-                                                                                        )}
-                                                                                        {isRework && (
-                                                                                            <>
-                                                                                                <div onClick={(e) => { e.stopPropagation(); updateLogStatus(log._id, 'Hold'); setActiveDropdownLogId(null); }} className="px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer flex items-center gap-2">
-                                                                                                    <span className="w-2 h-2 rounded-full bg-red-500"></span> Hold
-                                                                                                </div>
-                                                                                                <div onClick={(e) => { e.stopPropagation(); updateLogStatus(log._id, 'Completed'); setActiveDropdownLogId(null); }} className="px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer flex items-center gap-2">
-                                                                                                    <span className="w-2 h-2 rounded-full bg-green-500"></span> Completed
-                                                                                                </div>
-                                                                                            </>
-                                                                                        )}
-                                                                                        <div onClick={(e) => { e.stopPropagation(); setActiveDropdownLogId(null); }} className="px-4 py-2 text-xs text-gray-500 hover:bg-gray-50 cursor-pointer border-t border-gray-100 text-center">
-                                                                                            Cancel
-                                                                                        </div>
-                                                                                    </div>
-                                                                                );
-                                                                            };
-
                                                                             return (
                                                                                 <>
                                                                                     <span
                                                                                         onClick={(e) => {
-                                                                                            e.stopPropagation();
+                                                                                            e.stopPropagation(); if (!isQT) return; // Only allow dropdown for QT tasks
                                                                                             // Allow opening if it's today's log even if completed (so they can Edit)
                                                                                             if (isCompleted && log.date !== new Date().toISOString().split('T')[0]) {
                                                                                                 return;
                                                                                             }
-                                                                                            setActiveDropdownLogId(activeDropdownLogId === log._id ? null : log._id);
+
+                                                                                            if (activeDropdownLogId === log._id) {
+                                                                                                setActiveDropdownLogId(null);
+                                                                                            } else {
+                                                                                                const rect = e.currentTarget.getBoundingClientRect();
+                                                                                                setDropdownPosition({
+                                                                                                    top: rect.bottom + 8, // 8px spacing
+                                                                                                    left: rect.left + (rect.width / 2)
+                                                                                                });
+                                                                                                setActiveDropdownLogId(log._id);
+                                                                                            }
                                                                                         }}
-                                                                                        className={`inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${(isCompleted && log.date !== new Date().toISOString().split('T')[0]) ? 'cursor-default' : 'cursor-pointer hover:shadow-sm'} transition-all ${isRework ? 'bg-rose-50 text-rose-700 border-rose-100' :
+                                                                                        className={`inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${(!isQT || (isCompleted && log.date !== new Date().toISOString().split('T')[0])) ? 'cursor-default' : 'cursor-pointer hover:shadow-sm'} transition-all ${isRework ? 'bg-rose-50 text-rose-700 border-rose-100' :
                                                                                             isCompleted ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
                                                                                                 isHold ? 'bg-amber-50 text-amber-700 border-amber-100' :
                                                                                                     'bg-sky-50 text-sky-700 border-sky-100'
@@ -969,16 +1050,16 @@ const LogTime = () => {
                                                                                     >
                                                                                         {isRework ? 'Rework' : effectiveStatus}
                                                                                     </span>
-                                                                                    {renderDropdown()}
                                                                                 </>
                                                                             );
+
                                                                         })()}
                                                                     </td>
 
                                                                     {/* Log Type */}
                                                                     <td className="p-4 text-center">
-                                                                        <span className={`inline-block px-2 py-1 rounded text-xs font-bold border ${log.logType === 'Meeting' ? 'bg-teal-50 text-teal-700 border-teal-100' : ["QT Task", "QT", "Quick"].includes(log.logType) ? 'bg-purple-50 text-purple-700 border-purple-100' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
-                                                                            {log.logType === 'Meeting' ? 'Meeting' : ["QT Task", "QT", "Quick"].includes(log.logType) ? "Quick" : "Main"}
+                                                                        <span className={`inline-block px-2 py-1 rounded text-xs font-bold border ${log.logType === 'Meeting' ? 'bg-teal-50 text-teal-700 border-teal-100' : ["QT Task", "QT", "Quick"].includes(log.logType) ? 'bg-purple-50 text-purple-700 border-purple-100' : log.logType === 'RT' ? 'bg-rose-50 text-rose-700 border-rose-100' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
+                                                                            {log.logType === 'Meeting' ? 'Meeting' : ["QT Task", "QT", "Quick"].includes(log.logType) ? "Quick" : log.logType === 'RT' ? "RT" : "Main"}
                                                                         </span>
                                                                     </td>
 
@@ -1019,6 +1100,51 @@ const LogTime = () => {
                     log={selectedLog}
                     employees={[]} // User panel doesn't have full employee list with roles, which is fine
                 />
+
+                {/* Global Status Dropdown */}
+                {activeDropdownLogId && (() => {
+                    const log = recentLogs.find(l => l._id === activeDropdownLogId);
+                    if (!log) return null;
+
+                    const effectiveStatus = (log.status && !['In Progress', 'Pending'].includes(log.status)) ? log.status : (log.endTime ? "Completed" : "In Progress");
+                    const isHold = effectiveStatus.startsWith('Hold');
+                    const isInProgress = effectiveStatus === 'In Progress';
+                    const isRework = log.status === 'Rework';
+                    const isQT = ["QT Task", "QT", "Quick"].includes(log.logType) || ["QT Task", "QT", "Quick"].includes(log.taskType);
+
+                    return (
+                        <div
+                            className="fixed z-[1000] w-32 bg-white rounded-lg shadow-xl border border-gray-100 overflow-hidden text-left animate-fade-in-up"
+                            style={{
+                                top: `${dropdownPosition.top}px`,
+                                left: `${dropdownPosition.left}px`,
+                                transform: 'translateX(-50%)'
+                            }}
+                        >
+                            {isInProgress && (
+                                <>
+                                    <div onClick={(e) => { e.stopPropagation(); updateLogStatus(log._id, 'Completed'); }} className="px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer flex items-center gap-2 font-medium transition-colors">
+                                        <span className="w-2 h-2 rounded-full bg-green-500"></span> Completed
+                                    </div>
+                                </>
+                            )}
+                            {isHold && (
+                                <>
+                                    <div onClick={(e) => { e.stopPropagation(); updateLogStatus(log._id, 'In Progress', { endTime: null }); }} className="px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer flex items-center gap-2 font-medium transition-colors">
+                                        <span className="w-2 h-2 rounded-full bg-indigo-500"></span> In Progress
+                                    </div>
+                                    <div onClick={(e) => { e.stopPropagation(); updateLogStatus(log._id, 'Completed'); }} className="px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer flex items-center gap-2 font-medium transition-colors">
+                                        <span className="w-2 h-2 rounded-full bg-green-500"></span> Completed
+                                    </div>
+                                </>
+                            )}
+                            <div onClick={(e) => { e.stopPropagation(); setActiveDropdownLogId(null); }} className="px-4 py-2 text-xs text-gray-500 hover:bg-gray-50 cursor-pointer border-t border-gray-100 text-center font-medium">
+                                Cancel
+                            </div>
+                        </div>
+                    );
+                })()}
+
                 {/* Rework Confirmation Popup */}
                 {showReworkPopup && pendingReworkLog && (
                     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -1046,6 +1172,49 @@ const LogTime = () => {
                                     className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-bold transition shadow-lg"
                                 >
                                     Yes, Rework
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Auto-Hold Confirmation Modal */}
+                {showHoldConfirmation && conflictingTask && (
+                    <div className="fixed inset-0 z-[1001] flex items-center justify-center bg-black bg-opacity-50 animate-fade-in">
+                        <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-[360px] mx-4 border-l-4 border-amber-500">
+                            <div className="flex items-start mb-4">
+                                <div className="bg-amber-100 p-2 rounded-full mr-3">
+                                    <FaCalendarAlt className="text-amber-600" size={20} />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-800">Active Task Conflict</h3>
+                                    <p className="text-sm text-gray-600 mt-1">
+                                        You are already working on a <span className="font-bold text-indigo-600">
+                                            {conflictingTask.type === 'Main Task' ? 'Main Task' : conflictingTask.logType === 'Meeting' ? 'Meeting' : 'Quick Task'}
+                                        </span>.
+                                    </p>
+                                </div>
+                            </div>
+                            <p className="text-sm text-gray-600 mb-6 bg-gray-50 p-3 rounded-lg">
+                                Do you want to put it on <span className="font-bold text-amber-600">Hold</span>?
+                            </p>
+                            <div className="flex justify-end gap-3">
+                                <button
+                                    onClick={() => {
+                                        setShowHoldConfirmation(false);
+                                        setConflictingTask(null);
+                                        setPendingActionLogId(null);
+                                    }}
+                                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-bold hover:bg-gray-200 transition"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={confirmSwitchToNewTask}
+                                    disabled={isSubmitting}
+                                    className={`px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 shadow-md transition ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                >
+                                    {isSubmitting ? "Switching..." : "Yes, Switch Task"}
                                 </button>
                             </div>
                         </div>

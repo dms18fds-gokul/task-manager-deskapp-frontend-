@@ -32,7 +32,6 @@ export default function SessionView() {
             setMessages(res.data);
             setLoading(false);
         } catch (err) {
-            console.error(err);
             setError("Failed to load session. It may not exist or you don't have permission.");
             setLoading(false);
         }

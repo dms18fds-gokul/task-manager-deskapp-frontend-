@@ -76,8 +76,8 @@ export default function CreateChannelModal({ isOpen, onClose, onCreate, onAddMem
                 {/* Header */}
                 <div className="flex justify-between items-center px-6 py-5 border-b border-[#2B2D31]">
                     <h3 className="text-lg font-bold text-gray-100 tracking-wide flex items-center gap-2">
-                        {type === 'Global' ? <LayoutGrid size={18} className="text-blue-400" /> : <Layers size={18} className="text-orange-400" />}
-                        {channel ? 'Add Members' : (type === 'Global' ? 'Create Main Channel' : 'Create Department Channel')}
+                        {type === 'Global' ? <LayoutGrid size={18} className="text-blue-400" /> : type === 'DM' ? <User size={18} className="text-emerald-400" /> : <Layers size={18} className="text-orange-400" />}
+                        {channel ? 'Add Members' : (type === 'Global' ? 'Create Main Channel' : type === 'DM' ? 'Start Direct Message' : 'Create Department Channel')}
                     </h3>
                     <button
                         onClick={onClose}
@@ -115,31 +115,33 @@ export default function CreateChannelModal({ isOpen, onClose, onCreate, onAddMem
                         </div>
                     )}
 
-                    {/* Name Input */}
-                    <div className="space-y-2">
-                        <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest pl-0.5">
-                            {type === 'Global' ? 'Main Channel Name' : 'Department Channel Name'}
-                        </label>
-                        <div className="relative group">
-                            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-indigo-400 transition-colors">
-                                <Hash size={15} />
+                    {/* Name Input - Hidden for DM */}
+                    {type !== 'DM' && (
+                        <div className="space-y-2">
+                            <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest pl-0.5">
+                                {type === 'Global' ? 'Main Channel Name' : 'Department Channel Name'}
+                            </label>
+                            <div className="relative group">
+                                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-indigo-400 transition-colors">
+                                    <Hash size={15} />
+                                </div>
+                                <input
+                                    autoFocus
+                                    className="w-full bg-[#111214] text-gray-100 rounded-[4px] py-2.5 pl-9 pr-4 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder-gray-600 transition-all font-medium border-none shadow-inner"
+                                    placeholder={type === 'Global' ? "e.g. general-announcements" : "e.g. design-team"}
+                                    value={name}
+                                    onChange={e => setName(e.target.value.replace(/\s+/g, '-').toLowerCase())}
+                                    disabled={!!channel}
+                                />
                             </div>
-                            <input
-                                autoFocus
-                                className="w-full bg-[#111214] text-gray-100 rounded-[4px] py-2.5 pl-9 pr-4 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder-gray-600 transition-all font-medium border-none shadow-inner"
-                                placeholder={type === 'Global' ? "e.g. general-announcements" : "e.g. design-team"}
-                                value={name}
-                                onChange={e => setName(e.target.value.replace(/\s+/g, '-').toLowerCase())}
-                                disabled={!!channel}
-                            />
+                            {channel && <p className="text-[10px] text-yellow-500/80 mt-1 pl-0.5">Channel name cannot be changed while adding members.</p>}
+                            <p className="text-[11px] text-gray-500 pl-0.5">
+                                {type === 'Global'
+                                    ? "Visible to everyone in the organization."
+                                    : "Private channel. Only added members can view."}
+                            </p>
                         </div>
-                        {channel && <p className="text-[10px] text-yellow-500/80 mt-1 pl-0.5">Channel name cannot be changed while adding members.</p>}
-                        <p className="text-[11px] text-gray-500 pl-0.5">
-                            {type === 'Global'
-                                ? "Visible to everyone in the organization."
-                                : "Private channel. Only added members can view."}
-                        </p>
-                    </div>
+                    )}
 
                     {/* Member Selection */}
                     <div className="space-y-2">
@@ -159,13 +161,13 @@ export default function CreateChannelModal({ isOpen, onClose, onCreate, onAddMem
                     <div className="pt-2">
                         <button
                             type="submit"
-                            disabled={!name.trim()}
-                            className={`w-full py-2.5 rounded-[4px] text-sm font-semibold transition-all duration-200 transform active:scale-[0.98] ${name.trim()
+                            disabled={type !== 'DM' && !name.trim()}
+                            className={`w-full py-2.5 rounded-[4px] text-sm font-semibold transition-all duration-200 transform active:scale-[0.98] ${(type === 'DM' || name.trim())
                                 ? 'bg-[#5865F2] hover:bg-[#4752C4] text-white shadow-lg shadow-indigo-900/20'
                                 : 'bg-[#35373C] text-gray-500 cursor-not-allowed'
                                 }`}
                         >
-                            {channel ? 'Add Selected Members' : (type === 'Global' ? 'Create Main Channel' : 'Create Department Channel')}
+                            {channel ? 'Add Selected Members' : (type === 'Global' ? 'Create Main Channel' : type === 'DM' ? 'Start Chat' : 'Create Department Channel')}
                         </button>
                     </div>
                 </form>

@@ -7,8 +7,35 @@ import TaskDetailsModal from "../components/TaskDetailsModal";
 import LogEntryModal from "../components/LogEntryModal";
 import LeaveDetailsModal from "../components/LeaveDetailsModal"; // Verified Import
 import CustomDropdown from "../components/CustomDropdown";
-import { FaTasks, FaClipboardList, FaEllipsisV, FaEye, FaCheck, FaTimes, FaExclamationCircle, FaEnvelope, FaCalendarAlt, FaRedo, FaSignInAlt, FaSignOutAlt, FaClock, FaSearch } from "react-icons/fa";
+import TableLoader from "../components/TableLoader";
+import { FaTasks, FaClipboardList, FaEllipsisV, FaEye, FaCheck, FaTimes, FaExclamationCircle, FaEnvelope, FaCalendarAlt, FaRedo, FaSignInAlt, FaSignOutAlt, FaClock, FaSearch, FaExternalLinkAlt, FaComments, FaPaperPlane } from "react-icons/fa";
 import { MdPendingActions, MdCheckCircle, MdCancel } from "react-icons/md";
+
+const getDateLabel = (dateStr) => {
+    if (!dateStr) return "-";
+    const getLocalDateString = (d) => {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
+
+    const today = getLocalDateString(new Date());
+    const yesterdayDate = new Date();
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterday = getLocalDateString(yesterdayDate);
+
+    const taskDateStr = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+
+    if (taskDateStr === today) return "Today";
+    if (taskDateStr === yesterday) return "Yesterday";
+
+    if (taskDateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        const [y, m, d] = taskDateStr.split('-');
+        return `${d}-${m}-${y}`;
+    }
+    return taskDateStr;
+};
 
 const EmployeeDashboard = () => {
     const navigate = useNavigate();
@@ -18,10 +45,11 @@ const EmployeeDashboard = () => {
     const [loading, setLoading] = useState(false);
     const [invitationsList, setInvitationsList] = useState([]);
     const [tasks, setTasks] = useState([]);
+    const [employees, setEmployees] = useState([]);
     const [leavesList, setLeavesList] = useState([]); // Store list of leaves
     const [stats, setStats] = useState({
         total: 0,
-        inProgress: 0,
+        hold: 0,
         completed: 0,
         invitations: 0,
         today: 0,
@@ -33,13 +61,17 @@ const EmployeeDashboard = () => {
     const [openTaskDropdownId, setOpenTaskDropdownId] = useState(null);
     const [openLeaveDropdownId, setOpenLeaveDropdownId] = useState(null); // For Leave Table Dropdown
     const [selectedRejectionReason, setSelectedRejectionReason] = useState(null);
+    const [isTableLoading, setIsTableLoading] = useState(false);
+    const [confirmNavigation, setConfirmNavigation] = useState(null);
+    const [noChannelModalOpen, setNoChannelModalOpen] = useState(false);
 
-    const defaultFilter = { project: "", assignedBy: "", priority: "", status: "", fromDate: "", toDate: "" };
+    const todayStr = new Date().toISOString().split('T')[0];
+    const defaultFilter = { project: "", priority: "", status: "", fromDate: "", toDate: "" };
 
     // Filter State keyed by activeCard
     const [filters, setFilters] = useState({
         total: { ...defaultFilter },
-        inProgress: { ...defaultFilter },
+        hold: { ...defaultFilter },
         completed: { ...defaultFilter },
         invitations: { ...defaultFilter },
         today: { ...defaultFilter }
@@ -47,7 +79,7 @@ const EmployeeDashboard = () => {
 
     const [appliedFilters, setAppliedFilters] = useState({
         total: { ...defaultFilter },
-        inProgress: { ...defaultFilter },
+        hold: { ...defaultFilter },
         completed: { ...defaultFilter },
         invitations: { ...defaultFilter },
         today: { ...defaultFilter }
@@ -73,9 +105,62 @@ const EmployeeDashboard = () => {
                 fetchTasks(parsedUser.id || parsedUser._id);
                 fetchInvitations(parsedUser.id || parsedUser._id);
                 fetchLeaves(parsedUser.id || parsedUser._id);
+                fetchEmployees();
             }
         }
     }, [navigate]);
+
+    const fetchEmployees = async () => {
+        try {
+            const res = await fetch(`${API_URL}/employee/all`);
+            if (res.ok) {
+                const data = await res.json();
+                setEmployees(data);
+            }
+        } catch (err) {
+        }
+    };
+
+    const handleChatClick = async (taskId) => {
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch(`${API_URL}/channels/task/${taskId}`, {
+                headers: { 'x-auth-token': token }
+            });
+
+            if (res.ok) {
+                const channel = await res.json();
+                navigate(`/chat/${channel._id}`);
+            } else {
+                setNoChannelModalOpen(true);
+            }
+        } catch (error) {
+            alert("Error navigating to chat");
+        }
+    };
+
+    const NoChannelModal = () => {
+        if (!noChannelModalOpen) return null;
+        return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 animate-fadeIn">
+                <div className="bg-white rounded-2xl p-8 shadow-2xl max-w-sm w-full text-center transform transition-all scale-100">
+                    <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-indigo-100 mb-6">
+                        <FaComments className="h-8 w-8 text-indigo-600" />
+                    </div>
+                    <h3 className="text-xl font-bold text-gray-900 mb-2">No Chat Channel</h3>
+                    <p className="text-gray-500 mb-8">
+                        There is no chat channel created for this task yet. Channels are usually created when a task is accepted.
+                    </p>
+                    <button
+                        onClick={() => setNoChannelModalOpen(false)}
+                        className="w-full inline-flex justify-center rounded-xl border border-transparent shadow-md px-4 py-3 bg-indigo-600 text-base font-bold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all active:scale-95"
+                    >
+                        Got it
+                    </button>
+                </div>
+            </div>
+        );
+    };
 
     const fetchAttendanceStatus = async (employeeId) => {
         try {
@@ -85,7 +170,6 @@ const EmployeeDashboard = () => {
                 setAttendance(data);
             }
         } catch (error) {
-            console.error("Error fetching attendance:", error);
         }
     };
 
@@ -98,7 +182,6 @@ const EmployeeDashboard = () => {
                 setStats(prev => ({ ...prev, leaves: data.length }));
             }
         } catch (error) {
-            console.error("Error fetching leaves:", error);
         }
     };
 
@@ -114,7 +197,7 @@ const EmployeeDashboard = () => {
 
                 // Calculate stats
                 const total = data.length;
-                const inProgress = data.filter(t => t.status === "In Progress").length;
+                const hold = data.filter(t => t.status === "Hold").length;
                 const completed = data.filter(t => t.status === "Completed").length;
 
                 // Today's tasks (StartDate is today OR Deadline is today? Or Logged work today?)
@@ -122,10 +205,9 @@ const EmployeeDashboard = () => {
                 const todayStr = new Date().toISOString().split('T')[0];
                 const todayCount = data.filter(t => t.startDate === todayStr || t.deadline === todayStr).length;
 
-                setStats(prev => ({ ...prev, total, inProgress, completed, today: todayCount }));
+                setStats(prev => ({ ...prev, total, hold, completed, today: todayCount }));
             }
         } catch (error) {
-            console.error("Error fetching tasks:", error);
         }
     };
 
@@ -138,7 +220,6 @@ const EmployeeDashboard = () => {
                 setStats(prev => ({ ...prev, invitations: data.length }));
             }
         } catch (error) {
-            console.error("Error fetching invitations:", error);
         }
     };
 
@@ -160,7 +241,9 @@ const EmployeeDashboard = () => {
         if (activeCard === cardType) {
             setActiveCard(null); // Toggle off if already active
         } else {
+            setIsTableLoading(true);
             setActiveCard(cardType);
+            setTimeout(() => setIsTableLoading(false), 800);
         }
     };
 
@@ -174,12 +257,22 @@ const EmployeeDashboard = () => {
     const confirmStatusUpdate = async () => {
         if (!pendingStatusUpdate) return;
         const { taskId, newStatus } = pendingStatusUpdate;
+        const now = new Date();
+        const timeData = {
+            clientTime: now.toISOString(),
+            localTimeStr: now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+            localDateStr: now.toLocaleDateString('en-CA')
+        };
 
         try {
             const res = await fetch(`${API_URL}/tasks/${taskId}/status`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: newStatus }),
+                body: JSON.stringify({ 
+                    status: newStatus, 
+                    userId: user._id,
+                    ...timeData
+                }),
             });
 
             if (res.ok) {
@@ -191,7 +284,7 @@ const EmployeeDashboard = () => {
 
                     // Also need to recalculate stats based on updatedTasks
                     const total = updatedTasks.length;
-                    const inProgress = updatedTasks.filter(t => t.status === "In Progress").length;
+                    const hold = updatedTasks.filter(t => t.status === "Hold").length;
                     const completed = updatedTasks.filter(t => t.status === "Completed").length;
                     // Invitations is separate list
                     // Today needs check
@@ -201,7 +294,7 @@ const EmployeeDashboard = () => {
                     setStats(prev => ({
                         ...prev,
                         total,
-                        inProgress,
+                        hold,
                         completed,
                         today: todayCount
                     }));
@@ -212,7 +305,6 @@ const EmployeeDashboard = () => {
                 alert("Failed to update status");
             }
         } catch (error) {
-            console.error("Error updating status:", error);
             alert("Error updating status");
         }
     };
@@ -226,8 +318,8 @@ const EmployeeDashboard = () => {
             case 'total':
                 currentList = tasks;
                 break;
-            case 'inProgress':
-                currentList = tasks.filter(t => t.status === "In Progress");
+            case 'hold':
+                currentList = tasks.filter(t => t.status === "Hold");
                 break;
             case 'completed':
                 currentList = tasks.filter(t => t.status === "Completed");
@@ -249,13 +341,6 @@ const EmployeeDashboard = () => {
         if (currentAppliedFilters.project) {
             currentList = currentList.filter(t => t.projectName?.toLowerCase().includes(currentAppliedFilters.project.toLowerCase()));
         }
-        if (currentAppliedFilters.assignedBy) {
-            currentList = currentList.filter(t => {
-                if (!t.assignedBy) return false;
-                const assignedByName = typeof t.assignedBy === 'object' ? t.assignedBy.name : t.assignedBy;
-                return assignedByName === currentAppliedFilters.assignedBy;
-            });
-        }
         if (currentAppliedFilters.priority) {
             currentList = currentList.filter(t => t.priority === currentAppliedFilters.priority);
         }
@@ -275,56 +360,58 @@ const EmployeeDashboard = () => {
             });
         }
 
-        // 3. Group by Date
-        const grouped = {
-            "Today": [],
-            "Yesterday": [],
-            "Last Week": [],
-            "Old Tasks": []
-        };
+        // 2.1 Default to Today's tasks if no dates selected, unless another explicit filter is applied
+        const hasExplicitFilter = currentAppliedFilters.project || currentAppliedFilters.priority || currentAppliedFilters.status;
+        if (!currentAppliedFilters.fromDate && !currentAppliedFilters.toDate && !hasExplicitFilter) {
+            const todayStr = new Date().toISOString().split('T')[0];
+            currentList = currentList.filter(t => t.startDate === todayStr);
+        }
 
-        const today = new Date();
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const lastWeek = new Date(today);
-        lastWeek.setDate(lastWeek.getDate() - 7);
+        // 3. Group by Date using getDateLabel for dynamic groupings
+        const grouped = {};
 
         currentList.forEach(task => {
-            if (!task.startDate) {
-                grouped["Old Tasks"].push(task);
-                return;
+            const label = getDateLabel(task.startDate);
+            if (!grouped[label]) {
+                grouped[label] = [];
             }
-
-            const taskDate = new Date(task.startDate);
-            const isToday = taskDate.toDateString() === today.toDateString();
-            const isYesterday = taskDate.toDateString() === yesterday.toDateString();
-            const isLastWeek = taskDate > lastWeek && taskDate < yesterday;
-
-            if (isToday) {
-                grouped["Today"].push(task);
-            } else if (isYesterday) {
-                grouped["Yesterday"].push(task);
-            } else if (isLastWeek) {
-                grouped["Last Week"].push(task);
-            } else {
-                grouped["Old Tasks"].push(task);
-            }
+            grouped[label].push(task);
         });
 
-        return grouped;
+        // Ensure "Today" and "Yesterday" come first if they exist
+        const sortedGrouped = {};
+        if (grouped["Today"]) {
+            sortedGrouped["Today"] = grouped["Today"];
+            delete grouped["Today"];
+        }
+        if (grouped["Yesterday"]) {
+            sortedGrouped["Yesterday"] = grouped["Yesterday"];
+            delete grouped["Yesterday"];
+        }
+
+        // Add dates sorted descending
+        Object.keys(grouped).sort((a, b) => {
+            if (a === "-") return 1;
+            if (b === "-") return -1;
+            const parseDateLabel = (str) => {
+                const [d, m, y] = str.split('-');
+                return new Date(`${y}-${m}-${d}`);
+            };
+            return parseDateLabel(b) - parseDateLabel(a);
+        }).forEach(key => {
+            sortedGrouped[key] = grouped[key];
+        });
+
+        return sortedGrouped;
     };
 
     const groupedTasks = getGroupedTasks();
     const uniqueProjects = [...new Set(tasks.map(t => t.projectName))];
-    const uniqueAssigners = [...new Set(tasks.map(t => {
-        if (!t.assignedBy) return "Super Admin";
-        return typeof t.assignedBy === 'object' ? t.assignedBy.name : t.assignedBy;
-    }))];
 
     const getTableTitle = () => {
         switch (activeCard) {
             case 'total': return "Your Total Tasks";
-            case 'inProgress': return "In-Progress Tasks";
+            case 'hold': return "Hold Tasks";
             case 'completed': return "Completed Tasks";
             case 'invitations': return "New Task Invitations";
             case 'today': return "Today's Tasks";
@@ -343,25 +430,25 @@ const EmployeeDashboard = () => {
             {isSidebarOpen && (
                 <div className="fixed inset-0 z-40 md:hidden">
                     {/* Backdrop */}
-                    <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setIsSidebarOpen(false)}></div>
+                    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)}></div>
                     {/* Sidebar */}
                     <div className="absolute inset-y-0 left-0 z-50">
-                        <EmployeeSidebar className="flex h-full shadow-xl" />
+                        <EmployeeSidebar className="flex h-full shadow-2xl" onClose={() => setIsSidebarOpen(false)} />
                     </div>
                 </div>
             )}
 
             {/* Main Content */}
             <div className="flex-1 min-w-0 flex flex-col h-screen overflow-hidden">
-                {/* Header (Mobile toggle) */}
-                <header className="bg-white shadow-sm p-4 flex justify-between items-center md:hidden z-10">
-                    <h1 className="text-xl font-bold text-gray-800">UserPanel</h1>
+                {/* Mobile Header */}
+                <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center md:hidden z-10 sticky top-0">
+                    <h1 className="text-xl font-bold text-gray-800 uppercase tracking-tight">Dashboard</h1>
                     <button
                         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                        className="text-gray-600 focus:outline-none p-2 rounded hover:bg-gray-100"
+                        className="p-2 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors border border-gray-200"
                     >
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7"></path>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path>
                         </svg>
                     </button>
                 </header>
@@ -369,11 +456,11 @@ const EmployeeDashboard = () => {
                 <main className="flex-1 p-6 overflow-y-auto w-full h-full relative space-y-4">
                     <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
                         <div>
-                            <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Dashboard</h1>
+                            <h1 className="text-xl sm:text-2xl font-bold text-gray-800 uppercase">Dashboard</h1>
                             <div className="mt-3">
-                                <p className="text-xl font-medium text-gray-500 mb-1">Hi, Welcome Back 👋</p>
+                                <p className="text-md font-medium text-gray-500 mb-1 uppercase">Hi, Welcome Back 👋</p>
                                 <div className="flex items-center gap-2">
-                                    <h2 className="text-xl font-extrabold text-gray-800 tracking-tight leading-none">
+                                    <h2 className="text-xl font-extrabold text-gray-800 tracking-tight leading-none uppercase">
                                         {user.name?.toUpperCase()}
                                     </h2>
                                     <p className="text-sm font-bold text-indigo-600 mt-1 uppercase tracking-wide">
@@ -436,12 +523,12 @@ const EmployeeDashboard = () => {
                             />
                         </div>
 
-                        <div onClick={() => handleCardClick('inProgress')} className="cursor-pointer transition-transform hover:scale-105">
+                        <div onClick={() => handleCardClick('hold')} className="cursor-pointer transition-transform hover:scale-105">
                             <StatCard
-                                title="In-Progress"
-                                count={stats.inProgress}
+                                title="Hold Tasks"
+                                count={stats.hold}
                                 color="border-purple-500"
-                                icon={<MdPendingActions />}
+                                icon={<FaExclamationCircle />}
                             />
                         </div>
 
@@ -500,8 +587,9 @@ const EmployeeDashboard = () => {
                                             <input
                                                 type="date"
                                                 value={filters[activeCard]?.fromDate || ""}
+                                                max={filters[activeCard]?.toDate || ""}
                                                 onChange={(e) => setFilters({ ...filters, [activeCard]: { ...filters[activeCard], fromDate: e.target.value } })}
-                                                className="w-full px-3 py-2 pl-9 rounded text-[13px] border border-gray-200 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-medium h-[38px] cursor-pointer"
+                                                className="w-full px-3 py-2 pl-9 rounded text-[13px] border border-gray-200 bg-gray-50 text-gray-800 placeholder:text-gray-400 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-medium h-[38px] cursor-pointer"
                                             />
                                             <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
                                         </div>
@@ -514,8 +602,9 @@ const EmployeeDashboard = () => {
                                             <input
                                                 type="date"
                                                 value={filters[activeCard]?.toDate || ""}
+                                                min={filters[activeCard]?.fromDate || ""}
                                                 onChange={(e) => setFilters({ ...filters, [activeCard]: { ...filters[activeCard], toDate: e.target.value } })}
-                                                className="w-full px-3 py-2 pl-9 rounded text-[13px] border border-gray-200 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-medium h-[38px] cursor-pointer"
+                                                className="w-full px-3 py-2 pl-9 rounded text-[13px] border border-gray-200 bg-gray-50 text-gray-800 placeholder:text-gray-400 focus:ring-1 focus:ring-indigo-500 outline-none transition-all font-medium h-[38px] cursor-pointer"
                                             />
                                             <FaCalendarAlt className="absolute left-3 top-2.5 text-gray-400 text-xs" />
                                         </div>
@@ -525,6 +614,7 @@ const EmployeeDashboard = () => {
                                     <div className="flex flex-col gap-1.5">
                                         <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Project</label>
                                         <CustomDropdown
+                                            searchable={true}
                                             options={[{ value: "", label: "All Projects" }, ...uniqueProjects.map(p => ({ value: p, label: p }))]}
                                             value={filters[activeCard]?.project || ""}
                                             onChange={(val) => setFilters({ ...filters, [activeCard]: { ...filters[activeCard], project: val } })}
@@ -533,26 +623,19 @@ const EmployeeDashboard = () => {
                                         />
                                     </div>
 
-                                    {/* Assigned By */}
-                                    <div className="flex flex-col gap-1.5">
-                                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Assigned By</label>
-                                        <CustomDropdown
-                                            options={[
-                                                { value: "", label: "All Assigners" },
-                                                ...uniqueAssigners.map(name => ({ value: name, label: name }))
-                                            ]}
-                                            value={filters[activeCard]?.assignedBy || ""}
-                                            onChange={(val) => setFilters({ ...filters, [activeCard]: { ...filters[activeCard], assignedBy: val } })}
-                                            placeholder="All Assigners"
-                                            className="border-gray-200 text-[13px] font-medium h-[38px] hover:border-gray-300 transition-colors"
-                                        />
-                                    </div>
 
                                     {/* Priority */}
                                     <div className="flex flex-col gap-1.5">
                                         <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Priority</label>
                                         <CustomDropdown
-                                            options={[{ value: "", label: "All Priorities" }, { value: "High", label: "High" }, { value: "Medium", label: "Medium" }, { value: "Low", label: "Low" }]}
+                                            options={[
+                                                { value: "", label: "All Priorities" },
+                                                { value: "Very High", label: "Very High" },
+                                                { value: "High", label: "High" },
+                                                { value: "Medium", label: "Medium" },
+                                                { value: "Low", label: "Low" },
+                                                { value: "Very Low", label: "Very Low" }
+                                            ]}
                                             value={filters[activeCard]?.priority || ""}
                                             onChange={(val) => setFilters({ ...filters, [activeCard]: { ...filters[activeCard], priority: val } })}
                                             placeholder="All Priorities"
@@ -577,9 +660,11 @@ const EmployeeDashboard = () => {
                                 <div className="flex justify-end items-center gap-3">
                                     <button
                                         onClick={() => {
-                                            const resetFilters = { project: "", assignedBy: "", priority: "", status: "", fromDate: "", toDate: "" };
+                                            const resetFilters = { project: "", priority: "", status: "", fromDate: todayStr, toDate: todayStr };
                                             setFilters({ ...filters, [activeCard]: resetFilters });
                                             setAppliedFilters({ ...appliedFilters, [activeCard]: resetFilters });
+                                            setIsTableLoading(true);
+                                            setTimeout(() => setIsTableLoading(false), 800);
                                         }}
                                         className="bg-red-50 hover:bg-red-100 text-red-600 px-4 rounded-lg h-[38px] text-[13px] font-bold transition-all shadow-sm flex items-center justify-center transform active:scale-95 duration-200 cursor-pointer"
                                         title="Reset Filters"
@@ -587,7 +672,11 @@ const EmployeeDashboard = () => {
                                         <FaRedo className="text-sm" />
                                     </button>
                                     <button
-                                        onClick={() => setAppliedFilters({ ...appliedFilters, [activeCard]: filters[activeCard] })}
+                                        onClick={() => {
+                                            setIsTableLoading(true);
+                                            setAppliedFilters({ ...appliedFilters, [activeCard]: filters[activeCard] });
+                                            setTimeout(() => setIsTableLoading(false), 800);
+                                        }}
                                         className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 rounded-lg h-[38px] text-[13px] font-bold transition-all shadow-md flex items-center justify-center gap-2 transform active:scale-95 duration-200 whitespace-nowrap"
                                     >
                                         <FaSearch /> Fetch Data
@@ -595,94 +684,170 @@ const EmployeeDashboard = () => {
                                 </div>
                             </div>
 
-                            <div className="space-y-8 px-6 pb-6 py-4">
-                                {Object.entries(groupedTasks).map(([group, tasks]) => {
-                                    if (tasks.length === 0) return null;
+                            {isTableLoading ? (
+                                <div className="py-12">
+                                    <TableLoader />
+                                </div>
+                            ) : (
+                                <div className="space-y-8 px-6 pb-6 py-4">
+                                    {Object.entries(groupedTasks).map(([group, tasks]) => {
+                                        if (tasks.length === 0) return null;
 
-                                    return (
-                                        <div key={group}>
-                                            <div className="flex items-center gap-2 mb-4">
-                                                <h2 className="text-md font-bold text-gray-800">{group}</h2>
-                                                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-700">{tasks.length}</span>
-                                            </div>
+                                        return (
+                                            <div key={group}>
+                                                <div className="flex items-center gap-2 mb-4">
+                                                    <h2 className="text-md font-bold text-gray-800">{group}</h2>
+                                                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-700">{tasks.length}</span>
+                                                </div>
 
-                                            <div className="w-full overflow-x-auto custom-scrollbar rounded-xl border border-gray-100">
-                                                <table className="w-full text-left border-collapse min-w-[1000px] xl:min-w-full table-fixed">
-                                                    <thead className="bg-gray-50/50 text-left border-b border-gray-200">
-                                                        <tr>
-                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[5%] text-center">S.No</th>
-                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[12%]">Assigned By</th>
-                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%]">Project Name</th>
-                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[15%]">Task Title</th>
-                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[20%]">Description</th>
-                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[10%]">Start Date</th>
-                                                            <th className="px-6 py-4 text-xs font-extrabold text-gray-500 uppercase tracking-wider w-[10%]">Status</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-gray-100">
-                                                        {tasks.map((task, index) => (
-                                                            <tr key={task._id}
-                                                                onClick={() => setSelectedTaskForDetails(task)}
-                                                                className="hover:bg-indigo-50/20 transition-all duration-200 group cursor-pointer h-16 border-l-4 border-transparent hover:border-indigo-500"
-                                                            >
-                                                                {/* S.No */}
-                                                                <td className="px-6 py-4 text-center text-gray-400 font-mono text-xs align-middle">
-                                                                    {(index + 1).toString().padStart(2, '0')}
-                                                                </td>
-
-                                                                {/* Assigned By */}
-                                                                <td className="px-6 py-4 text-sm text-gray-700 font-medium align-middle">
-                                                                    {task.assignedBy?.name || "Super Admin"}
-                                                                </td>
-
-                                                                {/* Project Name */}
-                                                                <td className="px-6 py-4 text-sm font-bold text-gray-800 truncate align-middle" title={task.projectName}>
-                                                                    {task.projectName}
-                                                                </td>
-
-                                                                {/* Task Title */}
-                                                                <td className="px-6 py-4 text-sm font-semibold text-gray-800 truncate align-middle" title={task.taskTitle}>
-                                                                    {task.taskTitle}
-                                                                </td>
-
-                                                                {/* Description */}
-                                                                <td className="px-6 py-4 text-sm text-gray-600 truncate align-middle max-w-xs" title={task.description}>
-                                                                    {task.description}
-                                                                </td>
-
-                                                                {/* Start Date */}
-                                                                <td className="px-6 py-4 text-sm text-gray-600 font-medium align-middle whitespace-nowrap">
-                                                                    {task.startDate ? new Date(task.startDate).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' }) : "-"}
-                                                                </td>
-
-                                                                {/* Status */}
-                                                                <td className="px-6 py-4 align-middle">
-                                                                    <div className="relative" onClick={(e) => e.stopPropagation()}>
-                                                                        <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium
-                                                                            ${task.status === "In Progress" ? "bg-blue-100 text-blue-700" :
-                                                                                task.status === "Hold" ? "bg-amber-100 text-amber-700" :
-                                                                                    task.status === "Completed" ? "bg-emerald-100 text-emerald-700" :
-                                                                                        task.status === "Overdue" ? "bg-red-100 text-red-700" :
-                                                                                            "bg-gray-100 text-gray-700"}`}>
-                                                                            {task.status}
-                                                                        </div>
-                                                                    </div>
-                                                                </td>
+                                                <div className="w-full overflow-x-auto custom-scrollbar rounded-xl border border-gray-100">
+                                                    <table className="w-full text-left border-collapse min-w-[1000px] xl:min-w-full table-fixed">
+                                                        <thead>
+                                                            <tr className="bg-slate-50/80 text-left border-b border-slate-200">
+                                                                <th className="px-4 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[5%] text-center">T.No</th>
+                                                                <th className="px-4 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[14%]">Assigned By & To</th>
+                                                                <th className="px-4 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[12%]">Project Name</th>
+                                                                <th className="px-4 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[25%]">Description</th>
+                                                                <th className="px-4 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[10%]">Priority</th>
+                                                                <th className="px-4 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[10%]">Status</th>
+                                                                <th className="px-4 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[5%] text-center">Chats</th>
+                                                                <th className="px-4 py-4 text-[13px] font-bold text-slate-500 uppercase tracking-wider w-[5%] text-center">Edit</th>
                                                             </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
+                                                        </thead>
+                                                        <tbody className="divide-y divide-gray-100">
+                                                            {tasks.map((task, index) => (
+                                                                <tr key={task._id}
+                                                                    onClick={() => setSelectedTaskForDetails(task)}
+                                                                    className="hover:bg-indigo-50/20 transition-all duration-200 group cursor-pointer h-16 border-l-4 border-transparent hover:border-indigo-500"
+                                                                >
+                                                                    {/* T.No */}
+                                                                    <td className="px-4 py-4 align-middle">
+                                                                        <div className="flex flex-col items-center justify-center gap-2">
+                                                                            <span className="text-gray-400 font-mono text-xs font-medium">
+                                                                                {(tasks.length - index).toString().padStart(2, '0')}
+                                                                            </span>
+                                                                            <div
+                                                                                className={`w-2 h-2 rounded-sm ${task.logType === 'Offline Task' || task.isPendingOffline ? 'bg-red-500' : 'bg-emerald-500'}`}
+                                                                                title={task.logType === 'Offline Task' || task.isPendingOffline ? 'Offline Task' : 'Online Task'}
+                                                                            ></div>
+                                                                        </div>
+                                                                    </td>
 
-                                {Object.values(groupedTasks).every(group => group.length === 0) && (
-                                    <div className="p-8 text-center text-gray-500 border border-dashed border-gray-200 rounded-xl">
-                                        No items found in this category matching your filters.
-                                    </div>
-                                )}
-                            </div>
+                                                                    {/* Assigned By & To */}
+                                                                    <td className="px-4 py-4 align-middle">
+                                                                        <div className="flex flex-col gap-1.5">
+                                                                            <div className="flex items-center gap-2">
+                                                                                <span className="text-[10px] uppercase font-bold text-gray-400 w-6">By:</span>
+                                                                                <span className="text-xs font-bold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full truncate max-w-[120px]" title={task.assignedBy?.name}>
+                                                                                    {task.assignedBy?.name || "Super Admin"}
+                                                                                </span>
+                                                                            </div>
+                                                                            <div className="flex items-center gap-2">
+                                                                                <span className="text-[10px] uppercase font-bold text-gray-400 w-6">To:</span>
+                                                                                <div className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full truncate max-w-[150px]" title={(() => {
+                                                                                    let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
+                                                                                    if (!targets || targets.length === 0) {
+                                                                                        return task.assignType === "Overall" ? "Overall (All)" : "Unassigned";
+                                                                                    }
+                                                                                    return targets.map(assigneeId => {
+                                                                                        if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
+                                                                                        const emp = employees.find(e => e._id === assigneeId);
+                                                                                        return emp ? emp.name : assigneeId;
+                                                                                    }).join(", ");
+                                                                                })()}>
+                                                                                    {(() => {
+                                                                                        let targets = task.assignedTo && task.assignedTo.length > 0 ? task.assignedTo : task.assignee;
+                                                                                        if (!targets || targets.length === 0) {
+                                                                                            return <span className="text-gray-400 italic text-xs">{task.assignType === "Overall" ? "Overall (All)" : "Unassigned"}</span>;
+                                                                                        }
+                                                                                        return targets.map(assigneeId => {
+                                                                                            if (typeof assigneeId === 'object' && assigneeId.name) return assigneeId.name;
+                                                                                            const emp = employees.find(e => e._id === assigneeId);
+                                                                                            return emp ? emp.name : assigneeId;
+                                                                                        }).join(", ");
+                                                                                    })()}
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    </td>
+
+                                                                    {/* Project Name */}
+                                                                    <td className="px-4 py-4 text-sm font-bold text-gray-800 truncate align-middle" title={task.projectName}>
+                                                                        {task.projectName}
+                                                                    </td>
+
+                                                                    {/* Description */}
+                                                                    <td className="px-4 py-4 text-sm text-gray-600 align-middle max-w-xs" title={task.description}>
+                                                                        <div className="line-clamp-2 whitespace-normal break-words">
+                                                                            {task.description}
+                                                                        </div>
+                                                                    </td>
+
+                                                                    {/* Priority */}
+                                                                    <td className="px-4 py-4 align-middle">
+                                                                        <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold shadow-sm border ${task.priority === "Very High" ? "bg-rose-50 text-rose-600 border-rose-100" :
+                                                                                task.priority === "High" ? "bg-orange-50 text-orange-600 border-orange-100" :
+                                                                                    task.priority === "Medium" ? "bg-amber-50 text-amber-600 border-amber-100" :
+                                                                                        task.priority === "Low" ? "bg-blue-50 text-blue-600 border-blue-100" :
+                                                                                            task.priority === "Very Low" ? "bg-gray-50 text-gray-500 border-gray-100" :
+                                                                                                "bg-gray-50 text-gray-600 border-gray-100"
+                                                                            }`}>
+                                                                            {(task.priority === "High" || task.priority === "Very High") && <FaExclamationCircle className="mr-1.5 text-[10px]" />}
+                                                                            {task.priority || "Medium"}
+                                                                        </span>
+                                                                    </td>
+
+                                                                    {/* Status */}
+                                                                    <td className="px-4 py-4 align-middle">
+                                                                        <div className="relative" onClick={(e) => e.stopPropagation()}>
+                                                                            <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium
+                                                                            ${task.status === "In Progress" ? "bg-blue-100 text-blue-700" :
+                                                                                    task.status === "Hold" ? "bg-amber-100 text-amber-700" :
+                                                                                        task.status === "Completed" ? "bg-emerald-100 text-emerald-700" :
+                                                                                            task.status === "Overdue" ? "bg-red-100 text-red-700" :
+                                                                                                "bg-gray-100 text-gray-700"}`}>
+                                                                                {task.status}
+                                                                            </div>
+                                                                        </div>
+                                                                    </td>
+
+                                                                    {/* Chats */}
+                                                                    <td className="px-4 py-4 text-center align-middle">
+                                                                        <button
+                                                                            onClick={(e) => { e.stopPropagation(); handleChatClick(task._id); }}
+                                                                            className="inline-flex items-center justify-center h-9 w-9 text-indigo-500 bg-white border border-gray-200 hover:bg-indigo-50 hover:text-indigo-600 rounded-full transition-all shadow-sm hover:shadow active:scale-95 group-hover:border-indigo-200"
+                                                                            title="Open Chat"
+                                                                        >
+                                                                            <FaPaperPlane size={14} />
+                                                                        </button>
+                                                                    </td>
+
+                                                                    {/* Edit */}
+                                                                    <td className="px-4 py-4 text-center align-middle">
+                                                                        <button
+                                                                            onClick={(e) => { e.stopPropagation(); setConfirmNavigation(task); }}
+                                                                            className="inline-flex items-center justify-center h-9 w-9 text-blue-500 bg-white border border-gray-200 hover:bg-blue-50 hover:text-blue-600 rounded-full transition-all shadow-sm hover:shadow active:scale-95 group-hover:border-blue-200"
+                                                                            title="Navigate to Task Page"
+                                                                        >
+                                                                            <FaExternalLinkAlt size={14} />
+                                                                        </button>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+
+                                    {Object.values(groupedTasks).every(group => group.length === 0) && (
+                                        <div className="p-8 text-center text-gray-500 border border-dashed border-gray-200 rounded-xl">
+                                            No items found in this category matching your filters.
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -851,6 +1016,73 @@ const EmployeeDashboard = () => {
                 )
             }
 
+            <NoChannelModal />
+
+            {/* Confirmation Modal */}
+            {confirmNavigation && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/60 backdrop-blur-sm transition-opacity duration-300">
+                    <div className="bg-white rounded-[20px] shadow-2xl p-8 w-full max-w-[400px] transform transition-all scale-100 opacity-100 flex flex-col items-center text-center">
+
+                        {confirmNavigation.status === "Pending" ? (
+                            <>
+                                <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-blue-50 mb-5 shadow-inner border border-blue-100/50">
+                                    <FaExternalLinkAlt className="text-blue-600 text-2xl" />
+                                </div>
+                                <h3 className="text-[22px] font-bold text-slate-800 mb-2 tracking-tight">Edit Task ?</h3>
+                                <p className="text-[15px] text-slate-500 mb-8 leading-relaxed px-2">
+                                    Do you want to navigate to the page to edit this <span className="font-semibold text-slate-700">{confirmNavigation.taskType || "task"}</span>?
+                                </p>
+
+                                <div className="flex justify-center gap-4 w-full">
+                                    <button
+                                        onClick={() => setConfirmNavigation(null)}
+                                        className="px-6 py-3 text-[15px] font-bold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-all duration-200 flex-1 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-2"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            const type = confirmNavigation.taskType || "Individual Task";
+                                            if (type.toLowerCase().includes("group")) {
+                                                navigate(`/employee/assign-group-task`, { state: { taskToEdit: confirmNavigation } });
+                                            } else {
+                                                navigate(`/employee/assign-task`, { state: { taskToEdit: confirmNavigation } });
+                                            }
+                                            setConfirmNavigation(null);
+                                        }}
+                                        className="px-6 py-3 text-[15px] font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-all duration-200 shadow-md hover:shadow-lg flex-1 transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                                    >
+                                        Yes, Edit
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-rose-50 mb-5 shadow-inner border border-rose-100/50">
+                                    <FaExclamationCircle className="text-rose-500 text-2xl" />
+                                </div>
+                                <h3 className="text-[22px] font-extrabold text-slate-800 mb-2 tracking-tight">Editing Restricted</h3>
+
+                                <div className="w-full bg-amber-50/80 rounded-xl p-4 border border-amber-200/60 mb-8 mt-2 relative overflow-hidden">
+                                    <div className="absolute top-0 left-0 w-1 h-full bg-amber-400"></div>
+                                    <p className="text-[14px] text-amber-800 font-medium leading-relaxed">
+                                        The employee is already working on this task, so it cannot be updated at this time.
+                                    </p>
+                                </div>
+
+                                <div className="flex justify-center w-full">
+                                    <button
+                                        onClick={() => setConfirmNavigation(null)}
+                                        className="px-6 py-3 text-[15px] font-bold text-white bg-slate-800 rounded-xl hover:bg-slate-900 transition-all duration-200 shadow-md hover:shadow-lg w-full transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-slate-700 focus:ring-offset-2"
+                                    >
+                                        Acknowledge
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
         </div >
     );
 };

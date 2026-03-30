@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { API_URL } from '../../utils/config';
 import { format } from 'date-fns';
-import { Bell, Check, Clock, FileText, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
+import { Bell, Check, Clock, FileText, ChevronDown, ChevronUp, AlertCircle, ClipboardList } from 'lucide-react';
 
 export default function NotificationsView() {
     const [notifications, setNotifications] = useState([]);
@@ -22,7 +22,6 @@ export default function NotificationsView() {
             setNotifications(res.data);
             setLoading(false);
         } catch (error) {
-            console.error('Error fetching notifications:', error);
             setLoading(false);
         }
     };
@@ -37,7 +36,6 @@ export default function NotificationsView() {
                 prev.map(notif => notif._id === id ? { ...notif, isRead: true } : notif)
             );
         } catch (error) {
-            console.error('Error marking as read:', error);
         }
     };
 
@@ -51,7 +49,6 @@ export default function NotificationsView() {
                 prev.map(notif => ({ ...notif, isRead: true }))
             );
         } catch (error) {
-            console.error('Error marking all as read:', error);
         }
     };
 
@@ -66,6 +63,7 @@ export default function NotificationsView() {
         switch (type) {
             case 'approval': return <div className="p-2 bg-green-100 rounded-lg text-green-600"><Check size={20} /></div>;
             case 'rejection': return <div className="p-2 bg-red-100 rounded-lg text-red-600"><AlertCircle size={20} /></div>;
+            case 'task': return <div className="p-2 bg-indigo-100 rounded-lg text-indigo-600"><ClipboardList size={20} /></div>;
             default: return <div className="p-2 bg-blue-100 rounded-lg text-blue-600"><Bell size={20} /></div>;
         }
     };

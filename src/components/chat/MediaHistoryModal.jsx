@@ -3,12 +3,41 @@ import { X, Image, Film, FileText, Download, ExternalLink, Calendar, Music } fro
 import axios from 'axios';
 import { API_URL } from '../../utils/config';
 import MediaModal from './MediaModal';
+import { useAuth } from '../../context/AuthContext';
+import DownloadHistoryModal from './DownloadHistoryModal';
+
 
 export default function MediaHistoryModal({ channel, onClose }) {
+    const { user } = useAuth();
     const [activeTab, setActiveTab] = useState('images');
-    const [media, setMedia] = useState({ images: [], videos: [], docs: [] });
+    const [media, setMedia] = useState({ images: [], videos: [], audio: [], docs: [] });
     const [loading, setLoading] = useState(true);
     const [selectedMedia, setSelectedMedia] = useState(null);
+    const [historyItem, setHistoryItem] = useState(null);
+
+
+    const handleDownloadTrack = async (item) => {
+        try {
+            const token = localStorage.getItem('token');
+            const systemRoles = ['User', 'Admin', 'Super Admin', 'Manager'];
+            const department = Array.isArray(user?.role)
+                ? user.role.find(r => !systemRoles.includes(r)) || 'General'
+                : (!systemRoles.includes(user?.role) ? user?.role : 'General');
+
+            await axios.post(`${API_URL}/downloads`, {
+                employeeName: user?.name,
+                employeeId: user?.employeeId,
+                department: department,
+                fileName: item.name || 'download',
+                fileUrl: item.url,
+                fileType: item.type
+            }, {
+                headers: { 'x-auth-token': token }
+            });
+        } catch (trackErr) {
+            console.error("Failed to track download:", trackErr);
+        }
+    };
 
     useEffect(() => {
         fetchMedia();
@@ -55,7 +84,6 @@ export default function MediaHistoryModal({ channel, onClose }) {
 
             setMedia({ images, videos, audio, docs });
         } catch (err) {
-            console.error("Failed to fetch media", err);
         } finally {
             setLoading(false);
         }
@@ -108,15 +136,55 @@ export default function MediaHistoryModal({ channel, onClose }) {
                                 <Calendar size={10} className="mr-1" />
                                 {new Date(item.createdAt).toLocaleDateString()}
                             </div>
-                            <a
-                                href={item.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center justify-center bg-purple-600 hover:bg-purple-500 text-white py-1 rounded text-xs gap-1 pointer-events-auto"
-                                onClick={(e) => e.stopPropagation()}
+                            <button
+                                className="flex items-center justify-center bg-purple-600 hover:bg-purple-500 text-white py-1 rounded text-xs gap-1 pointer-events-auto w-full"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    const isSuperAdmin = user?.role?.includes('Super Admin');
+                                    
+                                    // Track and Download function
+                                    const performAction = async () => {
+                                        try {
+                                            const token = localStorage.getItem('token');
+                                            const systemRoles = ['User', 'Admin', 'Super Admin', 'Manager'];
+                                            const roles = user?.role || [];
+                                            const roleArr = Array.isArray(roles) ? roles : [roles];
+                                            const department = roleArr.find(r => !systemRoles.includes(r)) || 'General';
+
+                                            await axios.post(`${API_URL}/downloads`, {
+                                                employeeName: user?.name,
+                                                employeeId: user?.employeeId,
+                                                department: department,
+                                                fileName: item.name || 'download',
+                                                fileUrl: item.url,
+                                                fileType: item.type
+                                            }, {
+                                                headers: { 'x-auth-token': token }
+                                            });
+                                        } catch (trackErr) { console.error(trackErr); }
+
+                                        try {
+                                            const response = await fetch(item.url);
+                                            const blob = await response.blob();
+                                            const url = window.URL.createObjectURL(blob);
+                                            const link = document.createElement('a'); link.href = url;
+                                            link.setAttribute('download', item.name || 'download');
+                                            document.body.appendChild(link); link.click();
+                                            link.parentNode.removeChild(link); window.URL.revokeObjectURL(url);
+                                        } catch (error) { window.open(item.url, '_blank'); }
+                                    };
+
+                                    performAction();
+                                    
+                                    if (isSuperAdmin) {
+                                        setHistoryItem(item);
+                                    }
+                                }}
+
                             >
                                 <Download size={12} /> Download
-                            </a>
+                            </button>
+
                         </div>
                     </div>
                 ))}
@@ -179,7 +247,15 @@ export default function MediaHistoryModal({ channel, onClose }) {
                     onClose={() => setSelectedMedia(null)}
                 />
             )}
+
+            <DownloadHistoryModal
+                isOpen={!!historyItem}
+                onClose={() => setHistoryItem(null)}
+                fileUrl={historyItem?.url}
+                fileName={historyItem?.name}
+            />
         </div>
+
     );
 }
 

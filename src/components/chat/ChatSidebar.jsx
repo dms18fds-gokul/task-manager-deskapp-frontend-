@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Hash, Lock, LogOut, Plus, X, MoreVertical, User, Users, Briefcase, CornerDownRight, Trash2, UserPlus, UserMinus, GitBranch, ChevronRight, ChevronDown, Clock, Database, ArrowLeft, Home, Layers, MessageCircle, LayoutGrid, MessagesSquare, Power, CornerUpLeft, Bell } from 'lucide-react';
+import { Hash, Lock, LogOut, Plus, X, MoreVertical, User, Users, Briefcase, CornerDownRight, Trash2, UserPlus, UserMinus, GitBranch, ChevronRight, ChevronDown, Clock, Database, ArrowLeft, Home, Layers, MessageCircle, LayoutGrid, MessagesSquare, Power, CornerUpLeft, Bell, Download } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { IoReturnDownBack } from "react-icons/io5";
 import axios from 'axios';
@@ -15,10 +15,10 @@ import CreateChannelModal from './CreateChannelModal';
 
 
 // ...
-export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selectedChannelId, isPopup = false, refreshTrigger, onNotification }) {
+export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selectedChannelId, isPopup = false, refreshTrigger, onNotification, onClose }) {
     const { logout, user } = useAuth();
     const navigate = useNavigate();
-    const { socket } = useSocket();
+    const { socket, lastMessage } = useSocket();
     const [channels, setChannels] = useState([]);
     const [activeChannel, setActiveChannel] = useState(null);
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -35,6 +35,7 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
     // Notifications
     const [unreadCounts, setUnreadCounts] = useState({});
     const [recentNotifications, setRecentNotifications] = useState([]);
+    const [downloadLogs, setDownloadLogs] = useState([]);
 
     const [allUsers, setAllUsers] = useState([]);
 
@@ -56,7 +57,6 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
             setChannels(res.data);
             if (onChannelsLoaded) onChannelsLoaded(res.data);
         } catch (err) {
-            console.error(err);
             if (err.response && (err.response.status === 401 || err.response.status === 403)) {
                 logout();
             }
@@ -70,7 +70,6 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
             });
             setAllUsers(Array.isArray(res.data) ? res.data : res.data.users || []);
         } catch (err) {
-            console.error(err);
             if (err.response && (err.response.status === 401 || err.response.status === 403)) {
                 logout();
             }
@@ -84,7 +83,6 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
             });
             setAdminDMs(res.data);
         } catch (err) {
-            console.error("Failed to fetch admin DMs", err);
         }
     };
 
@@ -95,9 +93,25 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
             });
             setUnreadCounts(res.data);
         } catch (err) {
-            console.error("Failed to fetch unread counts", err);
         }
     };
+
+    const fetchDownloadLogs = async () => {
+        try {
+            const res = await axios.get(`${API_URL}/downloads`, {
+                headers: { 'x-auth-token': localStorage.getItem('token') }
+            });
+            setDownloadLogs(res.data);
+        } catch (err) {
+            console.error("Error fetching download logs:", err);
+        }
+    };
+
+    useEffect(() => {
+        if (activeView === 'downloads') {
+            fetchDownloadLogs();
+        }
+    }, [activeView]);
 
     const markChannelAsRead = async (channelId) => {
         try {
@@ -114,7 +128,6 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
             setRecentNotifications(prev => prev.filter(n => n.channel !== channelId));
 
         } catch (err) {
-            console.error(err);
         }
     };
 
@@ -127,18 +140,25 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
             setIsCreateModalOpen(false);
             setCreateModalType(null);
         } catch (err) {
-            console.error(err);
             alert(err.response?.data?.msg || 'Error creating channel');
         }
     };
 
     const handleCreateDM = async (targetUserId) => {
-        const existingDM = channels.find(c =>
-            c.type === 'DM' &&
-            c.allowedUsers &&
-            c.allowedUsers.some(u => (u._id || u) === targetUserId) &&
-            c.allowedUsers.some(u => (u._id || u) === (user._id || user.id))
-        );
+        const existingDM = channels.find(c => {
+            if (c.type !== 'DM') return false;
+
+            // Check primaryUsers first
+            if (c.primaryUsers && c.primaryUsers.length > 0) {
+                return c.primaryUsers.some(u => (u._id || u).toString() === targetUserId) &&
+                    c.primaryUsers.some(u => (u._id || u).toString() === (user._id || user.id).toString());
+            }
+
+            // Fallback for legacy DMs (no primaryUsers)
+            return c.allowedUsers && c.allowedUsers.length === 2 &&
+                c.allowedUsers.some(u => (u._id || u).toString() === targetUserId) &&
+                c.allowedUsers.some(u => (u._id || u).toString() === (user._id || user.id).toString());
+        });
 
         if (existingDM) {
             setActiveChannel(existingDM);
@@ -169,7 +189,6 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
             onSelectChannel({ ...newChannel, headerTitle });
 
         } catch (err) {
-            console.error(err);
         }
     };
 
@@ -201,7 +220,6 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
             setIsDeleteModalOpen(false);
             setChannelToDelete(null);
         } catch (err) {
-            console.error("Failed to delete channel", err);
             alert(err.response?.data?.message || err.message || "Failed to delete channel");
         }
     };
@@ -242,7 +260,6 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
 
             // Play Sound
             const audio = new Audio('/assets/notification.mp3');
-            audio.play().catch(e => console.log('Audio playback failed:', e));
 
             // Trigger Toast Notification via Parent
             if (onNotification) {
@@ -267,29 +284,39 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
 
         const handleChannelUpdate = () => {
             fetchChannels();
+            if (userRef.current && (userRef.current.role?.includes('Super Admin') || userRef.current.role?.includes('Admin'))) {
+                fetchAdminDMs();
+            }
         };
 
-        socket.on('message', handleNewMessage);
         socket.on('channelUpdated', handleChannelUpdate);
         socket.on('newChannel', handleChannelUpdate);
 
         return () => {
-            socket.off('message', handleNewMessage);
             socket.off('channelUpdated', handleChannelUpdate);
             socket.off('newChannel', handleChannelUpdate);
         };
     }, [socket]); // Only depend on socket to avoid re-binding loops
 
     useEffect(() => {
+        if (lastMessage) {
+            handleNewMessage(lastMessage);
+        }
+    }, [lastMessage]);
+
+    useEffect(() => {
         fetchChannels();
         fetchUnreadCounts(); // Fetch unread counts on refresh
-    }, [refreshTrigger]);
+        if (user && user.role?.includes('Super Admin')) {
+            fetchAdminDMs();
+        }
+    }, [refreshTrigger, user]);
 
     useEffect(() => {
         fetchChannels();
         fetchAllUsers(); // Fetch all users on mount for DM list
         fetchUnreadCounts(); // Fetch unread counts on mount
-        if (user && (user.role?.includes('Super Admin') || user.role?.includes('Admin'))) {
+        if (user && user.role?.includes('Super Admin')) {
             fetchAdminDMs();
         }
     }, [user]);
@@ -302,31 +329,40 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
         if (!allUsers.length) return channels.filter(c => c.type === 'DM');
 
         const existingDMs = channels.filter(c => c.type === 'DM');
-        const dmUserIds = new Set();
+        const dmTargetUserIds = new Set(); // Stores the _id of the *other* user in a 1:1 DM
+        const dmChannelIds = new Set(); // Stores the _id of the DM channel itself
         const uniqueDMs = [];
 
-        // Map existing DMs to their target user IDs and deduplicate existing DMs if necessary
         existingDMs.forEach(dm => {
-            // Find the other user from primaryUsers if available, fallback to allowedUsers
-            const targetUsers = dm.primaryUsers?.length > 0 ? dm.primaryUsers : dm.allowedUsers;
-            const otherUser = targetUsers?.find(u => (u._id || u).toString() !== (user._id || user.id).toString());
+            if (dmChannelIds.has(dm._id)) return; // Avoid processing the same DM channel twice
 
-            // If we are a super admin explicitly viewing someone else's DM (and we are NOT one of the primary participants)
-            // We still just add the DM to the list as it is. We handle the display name separately.
-            if (otherUser) {
-                const otherUserId = (otherUser._id || otherUser).toString();
-                if (!dmUserIds.has(otherUserId)) {
-                    dmUserIds.add(otherUserId);
+            const targetUsers = dm.primaryUsers?.length > 0 ? dm.primaryUsers : dm.allowedUsers;
+            const currentUserId = (user._id || user.id).toString();
+
+            // Determine if the current user is a direct participant in this DM
+            const isDirectParticipant = targetUsers?.some(u => (u._id || u).toString() === currentUserId);
+
+            if (isDirectParticipant) {
+                // For direct participants, we want to deduplicate by the *other* user
+                const otherUser = targetUsers?.find(u => (u._id || u).toString() !== currentUserId);
+                if (otherUser) {
+                    const otherUserId = (otherUser._id || otherUser).toString();
+                    if (!dmTargetUserIds.has(otherUserId)) {
+                        dmTargetUserIds.add(otherUserId);
+                        uniqueDMs.push(dm);
+                        dmChannelIds.add(dm._id);
+                    }
+                } else if (targetUsers && targetUsers.length === 1 && (targetUsers[0]._id || targetUsers[0]).toString() === currentUserId) {
+                    // Self-DM, if such a thing exists and is allowed
                     uniqueDMs.push(dm);
+                    dmChannelIds.add(dm._id);
                 }
-            } else if (targetUsers && targetUsers.length > 0) {
-                // Even if we don't find "another" user (e.g. self DM or edge case), ensure it's in the list
-                uniqueDMs.push(dm);
             }
         });
 
+        // Add potential DMs for users who don't have an existing DM with the current user
         const potentialDMs = allUsers
-            .filter(u => u._id !== user._id && !dmUserIds.has(u._id.toString()))
+            .filter(u => u._id !== (user._id || user.id) && !dmTargetUserIds.has(u._id.toString()))
             .map(u => ({
                 _id: `temp_${u._id}`,
                 isTemp: true,
@@ -352,6 +388,9 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
 
             // Save to localStorage
             localStorage.setItem('lastActiveChannelId', channel._id);
+
+            // Close mobile sidebar if applicable
+            if (onClose) onClose();
         }
     };
 
@@ -384,31 +423,38 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
         if (!user || !channel) return '';
 
         if (channel.type === 'DM') {
-            const targetUsers = channel.primaryUsers?.length > 0 ? channel.primaryUsers : channel.allowedUsers;
+            const currentUserId = (user._id || user.id).toString();
+            const isAdmin = user?.role?.includes('Super Admin') || user?.role?.includes('Admin');
 
-            // If the current user is NOT in the targetUsers (Super Admin observer)
-            const isObserver = targetUsers && !targetUsers.some(u => (u._id || u).toString() === (user._id || user.id).toString());
+            // Participants are primarily from primaryUsers, fallback to allowedUsers
+            const participantPool = channel.primaryUsers?.length > 0 ? channel.primaryUsers : channel.allowedUsers;
 
-            if (isObserver && targetUsers?.length >= 2) {
-                // Show both participants
-                const user1 = allUsers.find(u => u._id === (targetUsers[0]._id || targetUsers[0]));
-                const user2 = allUsers.find(u => u._id === (targetUsers[1]._id || targetUsers[1]));
-                if (user1 && user2) {
-                    return `${user1.name} & ${user2.name}`;
+            // For observers (Admins not in the chat), we want to show both participants
+            const isPrimaryParticipant = channel.primaryUsers?.some(u => (u._id || u).toString() === currentUserId);
+            const isObserver = isAdmin && !isPrimaryParticipant;
+
+            if (isObserver) {
+                const others = participantPool.filter(u => (u._id || u).toString() !== currentUserId);
+                if (others.length >= 2) {
+                    const u1Id = (others[0]._id || others[0]).toString();
+                    const u2Id = (others[1]._id || others[1]).toString();
+                    const n1 = allUsers.find(u => String(u._id) === u1Id)?.name || 'Unknown';
+                    const n2 = allUsers.find(u => String(u._id) === u2Id)?.name || 'Unknown';
+                    return `${n1} & ${n2}`;
                 }
             }
 
-            const otherUser = targetUsers?.find(u => (u._id || u).toString() !== (user._id || user.id).toString());
-
+            const otherUser = participantPool?.find(u => (u._id || u).toString() !== currentUserId);
             let targetUser = otherUser;
             if (otherUser && (typeof otherUser === 'string' || !otherUser.role)) {
-                const found = allUsers.find(u => u._id === (otherUser._id || otherUser));
+                const otherID = (otherUser._id || otherUser).toString();
+                const found = allUsers.find(u => String(u._id) === String(otherID));
                 if (found) targetUser = found;
             }
 
-            if (targetUser) {
+            if (targetUser && typeof targetUser === 'object') {
                 const roleStr = targetUser.role || targetUser.designation || '';
-                return `${targetUser.name}${roleStr ? ` - ${roleStr}` : ''}`;
+                return `${targetUser.name || 'Unknown User'}${roleStr ? ` - ${roleStr}` : ''}`;
             }
 
             return 'Unknown User';
@@ -437,6 +483,11 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
             return <Layers size={16} className="text-orange-400" />; // Department Icon
         }
 
+        // Project Channel Check (Has projectId but NOT taskId)
+        if (channel.projectId && !channel.taskId) {
+            return <Hash size={16} className="text-blue-400" />;
+        }
+
         // Main Channel (Global or Private Group)
         return <LayoutGrid size={16} className="text-blue-400" />;
     };
@@ -445,31 +496,39 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
 
     const getChannelName = (channel) => {
         if (channel.type === 'DM') {
-            const targetUsers = channel.primaryUsers?.length > 0 ? channel.primaryUsers : channel.allowedUsers;
+            const currentUserId = (user._id || user.id).toString();
+            const isAdmin = user?.role?.includes('Super Admin') || user?.role?.includes('Admin');
 
-            // If the current user is NOT in the targetUsers (Super Admin observer case)
-            const isObserver = targetUsers && !targetUsers.some(u => (u._id || u).toString() === (user._id || user.id).toString());
+            // Participants from primaryUsers, fallback to allowedUsers
+            const participantPool = channel.primaryUsers?.length > 0 ? channel.primaryUsers : channel.allowedUsers;
 
-            if (isObserver && targetUsers?.length >= 2) {
-                // Show both participants
-                const user1 = allUsers.find(u => u._id === (targetUsers[0]._id || targetUsers[0]));
-                const user2 = allUsers.find(u => u._id === (targetUsers[1]._id || targetUsers[1]));
-                if (user1 && user2) {
-                    return `${user1.name} & ${user2.name}`;
+            // For observers (Admins not in the chat), show both participants
+            const isPrimaryParticipant = channel.primaryUsers?.some(u => (u._id || u).toString() === currentUserId);
+            const isObserver = isAdmin && !isPrimaryParticipant;
+
+            if (isObserver) {
+                const others = participantPool.filter(u => (u._id || u).toString() !== currentUserId);
+                if (others.length >= 2) {
+                    const u1Id = (others[0]._id || others[0]).toString();
+                    const u2Id = (others[1]._id || others[1]).toString();
+                    const n1 = allUsers.find(u => String(u._id) === u1Id)?.name || 'Unknown';
+                    const n2 = allUsers.find(u => String(u._id) === u2Id)?.name || 'Unknown';
+                    return `${n1} & ${n2}`;
+                } else if (others.length === 1) {
+                    return allUsers.find(u => String(u._id) === (others[0]._id || others[0]).toString())?.name || 'Unknown User';
                 }
             }
 
-            const otherUser = targetUsers?.find(u => (u._id || u).toString() !== (user._id || user.id).toString());
-
-            // Try to find full user object from allUsers if possible to get role
+            const otherUser = participantPool?.find(u => (u._id || u).toString() !== currentUserId);
             let targetUser = otherUser;
             if (otherUser && (typeof otherUser === 'string' || !otherUser.role)) {
-                const found = allUsers.find(u => u._id === (otherUser._id || otherUser));
+                const otherID = (otherUser._id || otherUser).toString();
+                const found = allUsers.find(u => String(u._id) === String(otherID));
                 if (found) targetUser = found;
             }
 
-            if (targetUser) {
-                return targetUser.name;
+            if (targetUser && typeof targetUser === 'object') {
+                return targetUser.name || 'Unknown User';
             }
 
             return 'Unknown User';
@@ -585,7 +644,7 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
 
     if (!user) {
         return (
-            <div className="flex flex-col h-full w-96 bg-[#080610] border-r border-white/5 animate-pulse">
+            <div className="flex flex-col h-full w-[280px] sm:w-80 md:w-96 bg-[#080610] border-r border-white/5 animate-pulse">
                 {/* Skeleton Header */}
                 <div className="p-6 bg-[#120f1d] flex items-center gap-3 border-b border-white/5 shrink-0 h-[89px]">
                     <div className="h-10 w-10 rounded-lg bg-white/5" />
@@ -604,7 +663,7 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
     }
 
     return (
-        <div className="flex flex-col h-full w-96 bg-[#080610] border-r border-white/5">
+        <div className="flex flex-col h-full w-[280px] sm:w-80 md:w-96 bg-[#080610] border-r border-white/5 relative">
             {/* 1. User Profile (Full Width) */}
             <div className="p-6 bg-[#120f1d] flex items-center gap-3 border-b border-white/5 shrink-0 z-30">
                 <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center font-bold text-white shadow-sm shrink-0">
@@ -629,30 +688,7 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
                         {renderRailItem('dept', <Layers size={20} />, "Dept")}
                         {renderRailItem('task', <Briefcase size={20} />, "Tasks")}
                         {renderRailItem('dm', <MessagesSquare size={20} />, "DM")}
-
-                        {(user?.role?.includes('Super Admin') || user?.role?.includes('Admin')) && (
-                            renderRailItem('admin_dms', <Users size={20} />, "Admin 1on1")
-                        )}
-
-                        <button
-                            onClick={() => {
-                                setActiveView('history');
-                                const historyChannel = channels.find(c => c.name === 'Offline History');
-                                if (historyChannel) {
-                                    handleChannelClick(historyChannel);
-                                }
-                            }}
-                            className={`group relative flex flex-col items-center justify-center w-full py-2 transition-all ${activeView === 'history' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}
-                            title="Offline History"
-                        >
-                            <div className={`p-2 rounded-xl transition-all duration-300 mb-1 ${activeView === 'history' ? 'bg-primary-600 shadow-lg shadow-primary-900/50' : 'group-hover:bg-white/10'}`}>
-                                <Database size={20} />
-                            </div>
-                            <span className="text-[9px] font-medium tracking-wide uppercase">Offline</span>
-                            {activeView === 'history' && (
-                                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 bg-primary-500 rounded-r-full" />
-                            )}
-                        </button>
+                        {user?.role?.includes('Super Admin') && renderRailItem('admin-dm', <Users size={20} />, "1-1 DM")}
 
                         {renderRailItem('activity', <Bell size={20} />, "Activity", recentNotifications.length)}
                     </div>
@@ -719,6 +755,11 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
                                     // AND that are NOT explicit Department type
                                     // AND NOT 'Offline History'
                                     // AND NOT Task Channels (c.taskId)
+                                    // Must NOT be any of these specific types
+                                    if (['Department', 'DM'].includes(c.type)) return false;
+                                    if (c.name === 'Offline History') return false;
+                                    if (c.taskId) return false;
+                                    if (c.projectId) return false; // Exclude Project channels from Main
 
                                     const systemRoles = ['User', 'Admin', 'Super Admin', 'Manager'];
                                     const departmentNames = new Set(
@@ -728,10 +769,15 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
 
                                     const isLegacyDept = departmentNames.has(c.name);
 
-                                    return (c.type === 'Global' || c.name === 'Fox Digital One Team' || (c.type === 'Private' && !isLegacyDept))
-                                        && c.type !== 'Department'
-                                        && c.name !== 'Offline History'
-                                        && !c.taskId; // Exclude Task Channels
+                                    // If Private, must not be a legacy department
+                                    if (c.type === 'Private' && isLegacyDept) return false;
+
+                                    // Valid Main Channels:
+                                    if (c.type === 'Global') return true;
+                                    if (c.name === 'Fox Digital One Team') return true;
+                                    if (c.type === 'Private' && !isLegacyDept) return true;
+
+                                    return false;
                                 })).map(node => renderChannelNode(node))}
                             </>
                         )}
@@ -777,19 +823,11 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
                                 <div className="px-2 mb-1 mt-4 flex justify-between text-xs font-semibold text-gray-500 uppercase tracking-wider">
                                     <span>Task Channels</span>
                                 </div>
-                                {buildTree(channels.filter(c => c.taskId)).map(node => renderChannelNode(node))}
+                                {buildTree(channels.filter(c => c.taskId || (c.projectId && c.type !== 'Department'))).map(node => renderChannelNode(node))}
                             </>
                         )}
 
-                        {/* History Channel Section */}
-                        {(activeView === 'home' || activeView === 'history') && (
-                            <>
-                                <div className="px-2 mb-1 mt-4 flex justify-between text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                                    <span>OFFLINE HISTORY</span>
-                                </div>
-                                {buildTree(channels.filter(c => c.name === 'Offline History')).map(node => renderChannelNode(node))}
-                            </>
-                        )}
+
 
                         {/* DM Channels Section */}
                         {(activeView === 'home' || activeView === 'dm') && (
@@ -801,18 +839,16 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
                             </>
                         )}
 
-                        {/* Admin One-on-One Channels Section */}
-                        {activeView === 'admin_dms' && (user?.role?.includes('Super Admin') || user?.role?.includes('Admin')) && (
+                        {/* Admin 1-1 DM Section (Super Admin Only) */}
+                        {(activeView === 'home' || activeView === 'admin-dm') && user?.role?.includes('Super Admin') && (
                             <>
                                 <div className="px-2 mb-1 mt-4 flex justify-between text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                                    <span>One on One Channels</span>
+                                    <span>1-1 DM (Admin View)</span>
                                 </div>
-                                {adminDMs.length === 0 ? (
-                                    <div className="px-4 py-8 text-center text-gray-500 text-sm">
-                                        No active one-on-one channels found.
-                                    </div>
-                                ) : (
+                                {adminDMs.length > 0 ? (
                                     buildTree(adminDMs).map(node => renderChannelNode(node))
+                                ) : (
+                                    <div className="px-4 py-2 text-xs text-gray-500 italic">No direct messages found.</div>
                                 )}
                             </>
                         )}
@@ -900,6 +936,7 @@ export default function ChatSidebar({ onSelectChannel, onChannelsLoaded, selecte
                                 })()}
                             </>
                         )}
+
                     </div>
 
                     {/* Footer Links (Dashboard) */}

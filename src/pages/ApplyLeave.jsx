@@ -3,20 +3,33 @@ import { API_URL } from "../utils/config";
 import EmployeeSidebar from "../components/EmployeeSidebar";
 import CustomDropdown from "../components/CustomDropdown";
 import LeaveDetailsModal from "../components/LeaveDetailsModal";
-import { FaCalendarAlt, FaPaperPlane, FaBriefcaseMedical, FaCalendarCheck, FaUserClock, FaQuestionCircle, FaClipboardList } from "react-icons/fa";
+import { 
+    FaCalendarAlt, FaPaperPlane, FaBriefcaseMedical, 
+    FaCalendarCheck, FaUserClock, FaQuestionCircle, 
+    FaClipboardList, FaClock, FaCheckCircle, 
+    FaTimesCircle, FaHourglassHalf, FaInfoCircle,
+    FaCalendarDay, FaUserEdit, FaFileSignature,
+    FaHistory, FaChevronRight, FaArrowRight
+} from "react-icons/fa";
 
 const ApplyLeave = () => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [leaveCategory, setLeaveCategory] = useState("Day Leave"); // "Day Leave" or "Hour Permission"
     const [leavesList, setLeavesList] = useState([]);
     const [selectedLeave, setSelectedLeave] = useState(null);
-    const [formData, setFormData] = useState({
+    const [dayFormData, setDayFormData] = useState({
         leaveType: "Health Issue",
         appliedDate: new Date().toISOString().split('T')[0],
         leaveDate: new Date().toISOString().split('T')[0],
+        reason: ""
+    });
+
+    const [hourFormData, setHourFormData] = useState({
+        leaveType: "Health Issue",
+        appliedDate: new Date().toISOString().split('T')[0],
         permissionDate: new Date().toISOString().split('T')[0],
         startTime: "10:00",
-        endTime: "12:00",
+        endTime: "11:00",
         reason: ""
     });
 
@@ -49,11 +62,16 @@ const ApplyLeave = () => {
         // Update permissionDate to current time on mount/render if not set 
         const now = new Date();
         now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-        setFormData(prev => ({
+        const dateStr = now.toISOString().split('T')[0];
+        setDayFormData(prev => ({
             ...prev,
-            permissionDate: now.toISOString().split('T')[0],
-            appliedDate: now.toISOString().split('T')[0],
-            leaveDate: now.toISOString().split('T')[0]
+            appliedDate: dateStr,
+            leaveDate: dateStr
+        }));
+        setHourFormData(prev => ({
+            ...prev,
+            appliedDate: dateStr,
+            permissionDate: dateStr
         }));
 
         const storedUser = JSON.parse(localStorage.getItem("user"));
@@ -70,16 +88,24 @@ const ApplyLeave = () => {
                 setLeavesList(data);
             }
         } catch (error) {
-            console.error("Error fetching leaves:", error);
         }
     };
 
     const handleChange = (e) => {
-        setFormData({ ...formData, [e.target.name]: e.target.value });
+        const { name, value } = e.target;
+        if (leaveCategory === "Day Leave") {
+            setDayFormData(prev => ({ ...prev, [name]: value }));
+        } else {
+            setHourFormData(prev => ({ ...prev, [name]: value }));
+        }
     };
 
     const handleLeaveTypeChange = (val) => {
-        setFormData({ ...formData, leaveType: val });
+        if (leaveCategory === "Day Leave") {
+            setDayFormData(prev => ({ ...prev, leaveType: val }));
+        } else {
+            setHourFormData(prev => ({ ...prev, leaveType: val }));
+        }
     };
 
     const handleSubmit = async (e) => {
@@ -91,17 +117,19 @@ const ApplyLeave = () => {
             return;
         }
 
+        const currentData = leaveCategory === "Day Leave" ? dayFormData : hourFormData;
+
         const payload = {
             employeeId: storedUser._id || storedUser.id,
             leaveCategory,
-            leaveType: formData.leaveType,
-            appliedDate: formData.appliedDate,
-            reason: formData.reason,
+            leaveType: currentData.leaveType,
+            appliedDate: currentData.appliedDate,
+            reason: currentData.reason,
             // Conditional fields
-            leaveDate: leaveCategory === "Day Leave" ? formData.leaveDate : null,
-            permissionDate: leaveCategory === "Hour Permission" ? formData.permissionDate : null,
-            startTime: leaveCategory === "Hour Permission" ? formData.startTime : null,
-            endTime: leaveCategory === "Hour Permission" ? formData.endTime : null,
+            leaveDate: leaveCategory === "Day Leave" ? currentData.leaveDate : null,
+            permissionDate: leaveCategory === "Hour Permission" ? currentData.permissionDate : null,
+            startTime: leaveCategory === "Hour Permission" ? currentData.startTime : null,
+            endTime: leaveCategory === "Hour Permission" ? currentData.endTime : null,
         };
 
         try {
@@ -114,13 +142,16 @@ const ApplyLeave = () => {
             const data = await res.json();
             if (res.ok) {
                 setShowSuccess(true);
-                setFormData({ ...formData, reason: "", startTime: "10:00", endTime: "12:00" }); // Reset some fields
+                if (leaveCategory === "Day Leave") {
+                    setDayFormData(prev => ({ ...prev, reason: "" }));
+                } else {
+                    setHourFormData(prev => ({ ...prev, reason: "", startTime: "10:00", endTime: "11:00" }));
+                }
                 fetchLeaves(storedUser.id || storedUser._id); // Refresh list
             } else {
                 alert(data.message || "Failed to submit leave application.");
             }
         } catch (error) {
-            console.error("Error submitting leave:", error);
             alert("Server Error");
         }
     };
@@ -140,26 +171,34 @@ const ApplyLeave = () => {
             {/* Mobile Sidebar Overlay */}
             {isSidebarOpen && (
                 <div className="fixed inset-0 z-40 md:hidden">
-                    <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setIsSidebarOpen(false)}></div>
+                    {/* Backdrop */}
+                    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)}></div>
+                    {/* Sidebar */}
                     <div className="absolute inset-y-0 left-0 z-50">
-                        <EmployeeSidebar className="flex h-full shadow-xl" />
+                        <EmployeeSidebar className="flex h-full shadow-2xl" onClose={() => setIsSidebarOpen(false)} />
                     </div>
                 </div>
             )}
 
             {/* Main Content */}
-            <div className="flex-1 flex flex-col h-screen overflow-hidden">
-                <header className="bg-white shadow-sm p-4 flex justify-between items-center md:hidden z-10">
-                    <h1 className="text-xl font-bold text-gray-800">UserPanel</h1>
-                    <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="text-gray-600 p-2 rounded hover:bg-gray-100">
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+            <div className="flex-1 min-w-0 flex flex-col h-screen overflow-hidden">
+                {/* Mobile Header */}
+                <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center md:hidden z-10 sticky top-0">
+                    <h1 className="text-xl font-bold text-gray-800 uppercase tracking-tight">Apply Leave</h1>
+                    <button
+                        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                        className="p-2 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors border border-gray-200"
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
                     </button>
                 </header>
 
                 <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
-                    <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8">
-
-                        {/* Apply Leave Section */}
+                    <div className="max-w-5xl mx-auto space-y-6 sm:space-y-8">
+                        {/* Apply Leave Section - Keep this part compact */}
+                        <div className="max-w-3xl mx-auto w-full">
                         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                             <div className="p-8 border-b border-gray-100 bg-gray-50/50">
                                 <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
@@ -186,113 +225,127 @@ const ApplyLeave = () => {
                                     </button>
                                 </div>
 
-                                <form onSubmit={handleSubmit} className="space-y-6">
+                                <form onSubmit={handleSubmit} className="space-y-4 max-w-[500px] mx-auto">
                                     {/* Leave Type Custom Dropdown */}
                                     <div>
-                                        <CustomDropdown
-                                            label=""
-                                            value={formData.leaveType}
-                                            onChange={handleLeaveTypeChange}
-                                            options={leaveOptions}
-                                        />
+                                        <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.4em] mb-4 w-full">
+                                            <FaClipboardList className="text-slate-300" /> Leave Category
+                                        </label>
+                                        <div className="bg-slate-50/50 rounded-2xl p-1 shadow-inner border border-slate-100">
+                                            <CustomDropdown
+                                                label=""
+                                                value={leaveCategory === "Day Leave" ? dayFormData.leaveType : hourFormData.leaveType}
+                                                onChange={handleLeaveTypeChange}
+                                                options={leaveOptions}
+                                            />
+                                        </div>
                                     </div>
 
                                     {leaveCategory === "Day Leave" ? (
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+                                        <div className="flex flex-col gap-6">
                                             <div>
-                                                <label className="block text-sm font-semibold text-gray-700 mb-2">Applied Date</label>
-                                                <input
-                                                    type="date"
-                                                    value={formData.appliedDate}
-                                                    readOnly
-                                                    className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-100 text-gray-500 outline-none cursor-not-allowed"
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-semibold text-gray-700 mb-2">Leave Date</label>
-                                                <input
-                                                    type="date"
-                                                    name="leaveDate"
-                                                    value={formData.leaveDate}
-                                                    onChange={handleChange}
-                                                    required
-                                                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none transition-all bg-gray-50/30"
-                                                />
+                                                <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.4em] mb-4 w-full">
+                                                    <FaCalendarDay className="text-slate-300" /> Requested Leave Date
+                                                </label>
+                                                <div className="relative group/input">
+                                                    <input
+                                                        type="date"
+                                                        name="leaveDate"
+                                                        value={dayFormData.leaveDate}
+                                                        onChange={handleChange}
+                                                        required
+                                                        className="w-full px-5 py-2 pl-12 rounded-2xl border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all bg-white font-bold text-slate-800 shadow-sm hover:border-slate-300"
+                                                    />
+                                                    <FaCalendarAlt className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within/input:text-indigo-500 transition-colors" />
+                                                </div>
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                                        <div className="flex flex-col gap-6">
                                             <div>
-                                                <label className="block text-sm font-semibold text-gray-700 mb-2">Applied Date</label>
-                                                <input
-                                                    type="date"
-                                                    value={formData.appliedDate}
-                                                    readOnly
-                                                    className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-100 text-gray-500 outline-none cursor-not-allowed"
-                                                />
+                                                <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.4em] mb-4 w-full">
+                                                    <FaCalendarAlt className="text-slate-300" /> Permission Date
+                                                </label>
+                                                <div className="relative group/input">
+                                                    <input
+                                                        type="date"
+                                                        name="permissionDate"
+                                                        value={hourFormData.permissionDate}
+                                                        onChange={handleChange}
+                                                        required
+                                                        className="w-full px-5 py-2 pl-12 rounded-2xl border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all bg-white font-bold text-slate-800 shadow-sm hover:border-slate-300"
+                                                    />
+                                                    <FaCalendarAlt className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within/input:text-indigo-500 transition-colors" />
+                                                </div>
                                             </div>
-                                            <div>
-                                                <label className="block text-sm font-semibold text-gray-700 mb-2">Permission Date</label>
-                                                <input
-                                                    type="date"
-                                                    name="permissionDate"
-                                                    value={formData.permissionDate}
-                                                    onChange={handleChange}
-                                                    required
-                                                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none transition-all bg-gray-50/30"
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-semibold text-gray-700 mb-2">From</label>
-                                                <input
-                                                    type="time"
-                                                    name="startTime"
-                                                    value={formData.startTime}
-                                                    onChange={handleChange}
-                                                    required
-                                                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none transition-all bg-gray-50/30"
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-semibold text-gray-700 mb-2">To</label>
-                                                <input
-                                                    type="time"
-                                                    name="endTime"
-                                                    value={formData.endTime}
-                                                    onChange={handleChange}
-                                                    required
-                                                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none transition-all bg-gray-50/30"
-                                                />
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className="flex items-center  gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.4em] mb-4 w-full">
+                                                        <FaClock className="text-slate-300" /> Start
+                                                    </label>
+                                                    <div className="relative group/input">
+                                                        <input
+                                                            type="time"
+                                                            name="startTime"
+                                                            value={hourFormData.startTime}
+                                                            onChange={handleChange}
+                                                            required
+                                                            className="w-full px-4 py-2 rounded-2xl border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all bg-white font-bold text-slate-800 shadow-sm text-center"
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <label className="flex items-center  gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.4em] mb-4 w-full">
+                                                        <FaClock className="text-slate-300" /> End
+                                                    </label>
+                                                    <div className="relative group/input">
+                                                        <input
+                                                            type="time"
+                                                            name="endTime"
+                                                            value={hourFormData.endTime}
+                                                            onChange={handleChange}
+                                                            required
+                                                            className="w-full px-4 py-2 rounded-2xl border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all bg-white font-bold text-slate-800 shadow-sm text-center"
+                                                        />
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     )}
 
                                     {/* Reason */}
                                     <div>
-                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Reason for Leave</label>
-                                        <textarea
-                                            name="reason"
-                                            value={formData.reason}
-                                            onChange={handleChange}
-                                            required
-                                            rows="4"
-                                            placeholder="Please provide a brief reason..."
-                                            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none transition-all bg-gray-50/30 resize-none"
-                                        ></textarea>
+                                        <label className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.4em] mb-4 w-full">
+                                            <FaFileSignature className="text-slate-300" /> Brief Reason
+                                        </label>
+                                        <div className="relative group/input">
+                                            <textarea
+                                                name="reason"
+                                                value={leaveCategory === "Day Leave" ? dayFormData.reason : hourFormData.reason}
+                                                onChange={handleChange}
+                                                required
+                                                rows="3"
+                                                placeholder="Please provide a brief reason..."
+                                                className="w-full px-5 py-4 pl-12 rounded-2xl border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all bg-white font-bold text-slate-800 shadow-sm hover:border-slate-300 resize-none"
+                                            ></textarea>
+                                            <FaUserEdit className="absolute left-5 top-5 text-slate-300 group-focus-within/input:text-indigo-500 transition-colors" />
+                                        </div>
                                     </div>
 
                                     {/* Submit Button */}
-                                    <div className="pt-4">
+                                    <div className="pt-6">
                                         <button
                                             type="submit"
-                                            className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white font-semibold py-3 px-6 rounded-xl hover:bg-indigo-700 active:transform active:scale-95 transition-all shadow-lg shadow-indigo-200"
+                                            className="group relative w-full flex items-center justify-center gap-3 bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-black py-5 px-8 rounded-2xl hover:brightness-110 active:scale-[0.98] transition-all shadow-[0_15px_30px_-5px_rgba(79,70,229,0.3)] overflow-hidden"
                                         >
-                                            <FaPaperPlane />
-                                            Submit Application
+                                            <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                            <FaPaperPlane className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
+                                            <span className="uppercase tracking-widest text-xs">Submit Requisition</span>
                                         </button>
                                     </div>
                                 </form>
                             </div>
+                        </div>
                         </div>
 
                         {/* My Leave History Table */}

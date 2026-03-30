@@ -37,6 +37,7 @@ const EmployeeReportPage = () => {
     });
 
     const [employees, setEmployees] = useState([]);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const dropdownRef = useRef(null);
 
@@ -46,7 +47,6 @@ const EmployeeReportPage = () => {
                 const res = await axios.get(`${API_URL}/employee/all`);
                 setEmployees(res.data);
             } catch (err) {
-                console.error("Failed to fetch employees for search:", err);
             }
         };
         fetchEmployees();
@@ -149,7 +149,6 @@ const EmployeeReportPage = () => {
             // });
 
         } catch (err) {
-            console.error("Error fetching employee report data:", err);
             setError(err.response?.data?.message || "Failed to fetch employee details. Please verify the ID.");
         } finally {
             setLoading(false);
@@ -189,15 +188,12 @@ const EmployeeReportPage = () => {
         const hours = Math.floor(diff / (1000 * 60 * 60));
         diff -= hours * 1000 * 60 * 60;
         const minutes = Math.floor(diff / (1000 * 60));
-        diff -= minutes * 1000 * 60;
-        const seconds = Math.floor(diff / 1000);
 
         let durationString = "";
         if (hours > 0) durationString += `${hours} hr${hours > 1 ? 's' : ''} `;
-        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''} `;
-        if (seconds > 0) durationString += `${seconds} sec${seconds > 1 ? 's' : ''}`;
+        if (minutes > 0) durationString += `${minutes} min${minutes > 1 ? 's' : ''}`;
 
-        return durationString.trim() || "0 sec";
+        return durationString.trim() || "0 min";
     };
 
     const formatHHMMSS = (totalSeconds) => {
@@ -267,7 +263,21 @@ const EmployeeReportPage = () => {
     };
 
     const filteredAttendance = employeeData?.attendanceHistory?.filter(record => isDateInRange(record.date, appliedFilter)) || [];
-    const filteredLogs = employeeData?.logs?.filter(log => isDateInRange(log.date || log.Date, appliedFilter)) || [];
+    const filteredLogs = (employeeData?.logs || [])
+        .filter(log => isDateInRange(log.date || log.Date, appliedFilter))
+        .sort((a, b) => {
+            const dateA = new Date(a.date || a.Date);
+            const dateB = new Date(b.date || b.Date);
+            if (dateB - dateA !== 0) return dateB - dateA;
+            
+            const timeA = a.startTime || a["Start Time"] || "00:00";
+            const timeB = b.startTime || b["Start Time"] || "00:00";
+            if (timeA !== timeB) return timeB.localeCompare(timeA);
+            
+            const taskA = parseInt(a.taskNo || a["Task No"] || "0", 10);
+            const taskB = parseInt(b.taskNo || b["Task No"] || "0", 10);
+            return taskB - taskA;
+        });
     const filteredTasks = employeeData?.tasks?.filter(task => isDateInRange(task.startDate || task.createdAt, appliedFilter)) || [];
 
     // --- Summary Calculations ---
@@ -411,10 +421,38 @@ const EmployeeReportPage = () => {
     ];
 
     return (
-        <div className="flex h-screen bg-slate-50">
-            <Sidebar />
-            <div className="flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-6 lg:p-8 relative">
-                <div className="w-full max-w-7xl mx-auto space-y-6">
+        <div className="flex h-screen bg-slate-50 overflow-hidden relative">
+            {/* Desktop Sidebar */}
+            <Sidebar className="hidden md:flex" />
+
+            {/* Mobile Sidebar Overlay */}
+            {isSidebarOpen && (
+                <div className="fixed inset-0 z-40 md:hidden">
+                    {/* Backdrop */}
+                    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)}></div>
+                    {/* Sidebar container */}
+                    <div className="absolute inset-y-0 left-0 z-50">
+                        <Sidebar className="flex h-full shadow-2xl" onClose={() => setIsSidebarOpen(false)} />
+                    </div>
+                </div>
+            )}
+
+            <div className="flex-1 min-w-0 flex flex-col h-screen overflow-hidden">
+                {/* Mobile Header */}
+                <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center md:hidden z-10 sticky top-0">
+                    <h1 className="text-xl font-bold text-gray-800 uppercase tracking-tight">Employee Report</h1>
+                    <button
+                        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                        className="p-2 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors border border-gray-200"
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
+                </header>
+
+                <div className="flex-1 overflow-auto p-4 md:p-8 text-slate-800 relative custom-scrollbar">
+                    <div className="w-full max-w-7xl mx-auto space-y-6">
 
                     {/* Header & Search */}
                     <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
@@ -851,11 +889,14 @@ const EmployeeReportPage = () => {
 
                                                             {/* Priority */}
                                                             <td className="px-6 py-4 align-middle">
-                                                                <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold shadow-sm border ${task.priority === "High" ? "bg-rose-50 text-rose-600 border-rose-100" :
+                                                                <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold shadow-sm border ${
+                                                                    task.priority === "Very High" ? "bg-rose-50 text-rose-600 border-rose-100" :
+                                                                    task.priority === "High" ? "bg-orange-50 text-orange-600 border-orange-100" :
                                                                     task.priority === "Medium" ? "bg-amber-50 text-amber-600 border-amber-100" :
-                                                                        "bg-emerald-50 text-emerald-600 border-emerald-100"
+                                                                    task.priority === "Low" ? "bg-blue-50 text-blue-600 border-blue-100" :
+                                                                    "bg-gray-50 text-gray-600 border-gray-100"
                                                                     }`}>
-                                                                    {task.priority || "Normal"}
+                                                                    {task.priority || "Medium"}
                                                                 </span>
                                                             </td>
 
@@ -939,7 +980,7 @@ const EmployeeReportPage = () => {
                                                             onClick={() => handleActionClick(log, idx)}
                                                         >
                                                             <td className="p-4 text-xs font-bold text-gray-400 text-center">
-                                                                {idx + 1}
+                                                                {(filteredLogs.length - idx).toString().padStart(2, '0')}
                                                             </td>
 
                                                             {/* Date & Task No */}
@@ -1159,9 +1200,9 @@ const EmployeeReportPage = () => {
 
                         </div>
                     )}
-
                 </div>
             </div>
+        </div>
 
             <LogDetailsModal
                 isOpen={!!selectedLog}

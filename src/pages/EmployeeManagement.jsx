@@ -28,6 +28,24 @@ const EmployeeManagement = () => {
         password: "",
     });
 
+    const [userRole, setUserRole] = useState([]);
+    const [userDesignation, setUserDesignation] = useState("");
+
+    useEffect(() => {
+        const storedUser = localStorage.getItem("user");
+        if (storedUser) {
+            try {
+                const usr = JSON.parse(storedUser);
+                setUserRole(Array.isArray(usr.role) ? usr.role : [usr.role]);
+                setUserDesignation(usr.designation || "");
+            } catch (e) { }
+        }
+    }, []);
+
+    const isAdminOrSuperAdmin = userRole.includes("Super Admin") || userRole.includes("Admin");
+    const isTechLead = userDesignation.toLowerCase().includes("lead");
+    const canAddOptions = isAdminOrSuperAdmin || isTechLead;
+
     // Fetch next employee ID
     const fetchNextId = async () => {
         try {
@@ -37,7 +55,6 @@ const EmployeeManagement = () => {
                 setFormData((prev) => ({ ...prev, employeeId: data.nextId }));
             }
         } catch (error) {
-            console.error("Error fetching next ID:", error);
         }
     };
 
@@ -57,13 +74,12 @@ const EmployeeManagement = () => {
 
     const fetchEmployees = async () => {
         try {
-            const res = await fetch(`${API_URL}/employee/all`);
+            const res = await fetch(`${API_URL}/employee/all?includeInactiveProfiles=true`);
             if (res.ok) {
                 const data = await res.json();
                 setEmployees(data);
             }
         } catch (error) {
-            console.error("Error fetching employees:", error);
         }
     };
 
@@ -80,13 +96,15 @@ const EmployeeManagement = () => {
 
     const fetchOptions = async () => {
         try {
-            const res = await fetch(`${API_URL}/options/all`);
+            const token = localStorage.getItem('token');
+            const res = await fetch(`${API_URL}/options/all`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             if (res.ok) {
                 const data = await res.json();
                 setOptions(data);
             }
         } catch (error) {
-            console.error("Error fetching options:", error);
         }
     };
 
@@ -94,9 +112,13 @@ const EmployeeManagement = () => {
         if (!newOption.value.trim()) return;
 
         try {
+            const token = localStorage.getItem('token');
             const res = await fetch(`${API_URL}/options/add`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { 
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
                 body: JSON.stringify(newOption)
             });
 
@@ -109,7 +131,6 @@ const EmployeeManagement = () => {
                 alert(data.message);
             }
         } catch (error) {
-            console.error("Error adding option:", error);
             alert("Failed to add option");
         }
     };
@@ -186,7 +207,6 @@ const EmployeeManagement = () => {
                 alert("Employee not found");
             }
         } catch (error) {
-            console.error("Fetch error:", error);
             alert("Error fetching details");
         }
     };
@@ -298,7 +318,6 @@ const EmployeeManagement = () => {
                 fetchNextId(); // Fetch next ID for the next entry
             }
         } catch (error) {
-            console.error("API Error:", error);
             setError("Server error");
         } finally {
             setLoading(false);
@@ -307,17 +326,31 @@ const EmployeeManagement = () => {
 
     return (
         <div className="flex h-screen overflow-hidden bg-gray-100 font-sans relative">
+            {/* Desktop Sidebar */}
             <Sidebar className="hidden md:flex" />
 
-            <div className="flex-1 flex flex-col h-screen overflow-hidden">
-                <header className="bg-white shadow-sm p-4 flex justify-between items-center md:hidden z-10">
-                    <h1 className="text-xl font-bold text-gray-800">AdminPanel</h1>
+            {/* Mobile Sidebar Overlay */}
+            {isSidebarOpen && (
+                <div className="fixed inset-0 z-40 md:hidden">
+                    {/* Backdrop */}
+                    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)}></div>
+                    {/* Sidebar container */}
+                    <div className="absolute inset-y-0 left-0 z-50">
+                        <Sidebar className="flex h-full shadow-2xl" onClose={() => setIsSidebarOpen(false)} />
+                    </div>
+                </div>
+            )}
+
+            <div className="flex-1 min-w-0 flex flex-col h-screen overflow-hidden">
+                {/* Mobile Header */}
+                <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center md:hidden z-10 sticky top-0">
+                    <h1 className="text-xl font-bold text-gray-800 uppercase tracking-tight">Employees</h1>
                     <button
                         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                        className="text-gray-600 focus:outline-none p-2 rounded hover:bg-gray-100"
+                        className="p-2 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors border border-gray-200"
                     >
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7"></path>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path>
                         </svg>
                     </button>
                 </header>
@@ -462,13 +495,15 @@ const EmployeeManagement = () => {
                             <div className="space-y-2">
                                 <div className="flex justify-between items-center">
                                     <label className="text-sm font-semibold text-gray-700">Department</label>
-                                    <button
-                                        type="button"
-                                        onClick={() => openAddModal("department")}
-                                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-                                    >
-                                        + Add New
-                                    </button>
+                                    {canAddOptions && (
+                                        <button
+                                            type="button"
+                                            onClick={() => openAddModal("department")}
+                                            className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                                        >
+                                            + Add New
+                                        </button>
+                                    )}
                                 </div>
                                 <MultiSelectDropdown
                                     options={options.department || []}
@@ -481,13 +516,15 @@ const EmployeeManagement = () => {
                             <div className="space-y-2">
                                 <div className="flex justify-between items-center">
                                     <label className="text-sm font-semibold text-gray-700">Role</label>
-                                    <button
-                                        type="button"
-                                        onClick={() => openAddModal("designation")}
-                                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-                                    >
-                                        + Add New
-                                    </button>
+                                    {canAddOptions && (
+                                        <button
+                                            type="button"
+                                            onClick={() => openAddModal("designation")}
+                                            className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                                        >
+                                            + Add New
+                                        </button>
+                                    )}
                                 </div>
                                 <SingleSelectDropdown
                                     options={options.designation || []}
@@ -501,13 +538,15 @@ const EmployeeManagement = () => {
                             <div className="space-y-2">
                                 <div className="flex justify-between items-center">
                                     <label className="text-sm font-semibold text-gray-700">Work Type</label>
-                                    <button
-                                        type="button"
-                                        onClick={() => openAddModal("workType")}
-                                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-                                    >
-                                        + Add New
-                                    </button>
+                                    {canAddOptions && (
+                                        <button
+                                            type="button"
+                                            onClick={() => openAddModal("workType")}
+                                            className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                                        >
+                                            + Add New
+                                        </button>
+                                    )}
                                 </div>
                                 <SingleSelectDropdown
                                     options={options.workType || []}

@@ -1,11 +1,18 @@
 import { X, ZoomIn, ZoomOut, Download, FileText, Music, Video, ExternalLink } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
-import DownloadRequestModal from './DownloadRequestModal';
+import axios from 'axios';
+import { useAuth } from '../../context/AuthContext';
+import { API_URL } from '../../utils/config';
+import DownloadHistoryModal from './DownloadHistoryModal';
+
+
 
 export default function MediaModal({ src, type = 'image', fileName = 'Media', onClose, channelId }) {
+    const { user } = useAuth();
     const [scale, setScale] = useState(1);
-    const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
+    const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const videoRef = useRef(null);
+
     const audioRef = useRef(null);
 
     // Reset scale on open
@@ -30,10 +37,57 @@ export default function MediaModal({ src, type = 'image', fileName = 'Media', on
     const isAudio = type.startsWith('audio/') || src.match(/\.(mp3|wav|ogg|m4a)$/i);
     const isPDF = type === 'application/pdf' || src.match(/\.pdf$/i);
 
-    const handleDownloadClick = (e) => {
+    const handleDownloadClick = async (e) => {
         e.stopPropagation();
-        setIsDownloadModalOpen(true);
+
+        const isSuperAdmin = user?.role?.includes('Super Admin');
+
+        // Track download
+        try {
+            const token = localStorage.getItem('token');
+            const systemRoles = ['User', 'Admin', 'Super Admin', 'Manager'];
+            const roles = user?.role || [];
+            const roleArr = Array.isArray(roles) ? roles : [roles];
+            const department = roleArr.find(r => !systemRoles.includes(r)) || 'General';
+
+            await axios.post(`${API_URL}/downloads`, {
+                employeeName: user?.name,
+                employeeId: user?.employeeId,
+                department: department,
+                fileName: fileName || 'download',
+                fileUrl: src,
+                fileType: type
+            }, {
+                headers: { 'x-auth-token': token }
+            });
+        } catch (trackErr) {
+            console.error("Failed to track download:", trackErr);
+        }
+
+        // Perform actual download
+        try {
+            const response = await fetch(src);
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', fileName || 'download');
+            document.body.appendChild(link);
+            link.click();
+            link.parentNode.removeChild(link);
+            window.URL.revokeObjectURL(url);
+        } catch (error) {
+            window.open(src, '_blank');
+        }
+
+        // For Super Admin, ALSO open history popup
+        if (isSuperAdmin) {
+            setIsHistoryOpen(true);
+        }
     };
+
+
+
 
     const renderContent = () => {
         if (isImage) {
@@ -97,7 +151,7 @@ export default function MediaModal({ src, type = 'image', fileName = 'Media', on
                     onClick={handleDownloadClick}
                     className="mt-2 px-6 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg flex items-center gap-2 transition-colors"
                 >
-                    <Download size={18} /> Request Download
+                    <Download size={18} /> Download
                 </button>
             </div>
         );
@@ -114,7 +168,7 @@ export default function MediaModal({ src, type = 'image', fileName = 'Media', on
                     <button
                         onClick={handleDownloadClick}
                         className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
-                        title="Request Download"
+                        title="Download"
                     >
                         <Download size={20} />
                     </button>
@@ -153,15 +207,13 @@ export default function MediaModal({ src, type = 'image', fileName = 'Media', on
                 </div>
             </div>
 
-            {isDownloadModalOpen && (
-                <DownloadRequestModal
-                    fileUrl={src}
-                    fileName={fileName}
-                    fileType={type}
-                    channelId={channelId}
-                    onClose={() => setIsDownloadModalOpen(false)}
-                />
-            )}
+            <DownloadHistoryModal
+                isOpen={isHistoryOpen}
+                onClose={() => setIsHistoryOpen(false)}
+                fileUrl={src}
+                fileName={fileName}
+            />
         </>
+
     );
 }

@@ -34,7 +34,6 @@ export default function ProfileModal({ isOpen, onClose, user, isEditable }) {
             // Force reload to update context/sidebar (Simple fix for now)
             window.location.reload();
         } catch (err) {
-            console.error(err);
             alert('Failed to update profile');
         }
     };

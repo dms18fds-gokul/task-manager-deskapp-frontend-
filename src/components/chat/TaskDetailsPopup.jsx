@@ -27,7 +27,6 @@ export default function TaskDetailsPopup({ taskId, onClose }) {
             setTask(res.data);
             setLoading(false);
         } catch (err) {
-            console.error("Failed to fetch task details", err);
             setError("Could not load task details.");
             setLoading(false);
         }

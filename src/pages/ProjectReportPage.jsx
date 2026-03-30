@@ -20,6 +20,7 @@ const ProjectReportPage = () => {
     const [selectedLog, setSelectedLog] = useState(null);
     const [selectedTaskForDetails, setSelectedTaskForDetails] = useState(null);
     const [employees, setEmployees] = useState([]);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
     useEffect(() => {
         const fetchEmployees = async () => {
@@ -27,7 +28,6 @@ const ProjectReportPage = () => {
                 const res = await axios.get(`${API_URL}/employee/all`);
                 setEmployees(res.data);
             } catch (err) {
-                console.error("Failed to fetch employees", err);
             }
         };
         fetchEmployees();
@@ -69,11 +69,22 @@ const ProjectReportPage = () => {
             setProjectData({
                 projectName: projectName,
                 tasks: tasks,
-                logs: logs
+                logs: logs.sort((a, b) => {
+                    const dateA = new Date(a.date || a.Date);
+                    const dateB = new Date(b.date || b.Date);
+                    if (dateB - dateA !== 0) return dateB - dateA;
+                    
+                    const timeA = a.startTime || a["Start Time"] || "00:00";
+                    const timeB = b.startTime || b["Start Time"] || "00:00";
+                    if (timeA !== timeB) return timeB.localeCompare(timeA);
+                    
+                    const taskA = parseInt(a.taskNo || a["Task No"] || "0", 10);
+                    const taskB = parseInt(b.taskNo || b["Task No"] || "0", 10);
+                    return taskB - taskA;
+                })
             });
 
         } catch (err) {
-            console.error("Error fetching project report data:", err);
             setError(err.response?.data?.message || "Failed to fetch project details.");
         } finally {
             setLoading(false);
@@ -227,10 +238,38 @@ const ProjectReportPage = () => {
     ] : [];
 
     return (
-        <div className="flex h-screen bg-slate-50">
-            <Sidebar />
-            <div className="flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-6 lg:p-10 text-slate-800 relative z-0">
-                <div className="max-w-[1600px] mx-auto space-y-8">
+        <div className="flex h-screen bg-slate-50 overflow-hidden relative">
+            {/* Desktop Sidebar */}
+            <Sidebar className="hidden md:flex" />
+
+            {/* Mobile Sidebar Overlay */}
+            {isSidebarOpen && (
+                <div className="fixed inset-0 z-40 md:hidden">
+                    {/* Backdrop */}
+                    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)}></div>
+                    {/* Sidebar container */}
+                    <div className="absolute inset-y-0 left-0 z-50">
+                        <Sidebar className="flex h-full shadow-2xl" onClose={() => setIsSidebarOpen(false)} />
+                    </div>
+                </div>
+            )}
+
+            <div className="flex-1 min-w-0 flex flex-col h-screen overflow-hidden">
+                {/* Mobile Header */}
+                <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center md:hidden z-10 sticky top-0">
+                    <h1 className="text-xl font-bold text-gray-800 uppercase tracking-tight">Project Report</h1>
+                    <button
+                        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                        className="p-2 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors border border-gray-200"
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
+                </header>
+
+                <div className="flex-1 overflow-auto p-4 md:p-10 text-slate-800 relative custom-scrollbar">
+                    <div className="max-w-[1600px] mx-auto space-y-8">
 
                     {/* Header and Search */}
                     <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
@@ -426,12 +465,15 @@ const ProjectReportPage = () => {
 
                                                             {/* Priority */}
                                                             <td className="px-6 py-4 align-middle">
-                                                                <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold shadow-sm border ${task.priority === "High" ? "bg-rose-50 text-rose-600 border-rose-100" :
+                                                                <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold shadow-sm border ${
+                                                                    task.priority === "Very High" ? "bg-rose-50 text-rose-600 border-rose-100" :
+                                                                    task.priority === "High" ? "bg-orange-50 text-orange-600 border-orange-100" :
                                                                     task.priority === "Medium" ? "bg-amber-50 text-amber-600 border-amber-100" :
-                                                                        "bg-emerald-50 text-emerald-600 border-emerald-100"
+                                                                    task.priority === "Low" ? "bg-blue-50 text-blue-600 border-blue-100" :
+                                                                    "bg-gray-50 text-gray-600 border-gray-100"
                                                                     }`}>
-                                                                    {task.priority === "High" && <FaExclamationCircle className="mr-1.5 text-[10px]" />}
-                                                                    {task.priority || "Normal"}
+                                                                    {(task.priority === "High" || task.priority === "Very High") && <FaExclamationCircle className="mr-1.5 text-[10px]" />}
+                                                                    {task.priority || "Medium"}
                                                                 </span>
                                                             </td>
 
@@ -519,7 +561,7 @@ const ProjectReportPage = () => {
                                                                 onClick={() => handleActionClick(log, index)}
                                                             >
                                                                 <td className="p-4 text-xs font-bold text-gray-400 text-center align-middle">
-                                                                    {(index + 1).toString().padStart(2, '0')}
+                                                                    {(projectData.logs.length - index).toString().padStart(2, '0')}
                                                                 </td>
 
                                                                 {/* Employee Name */}
@@ -609,19 +651,20 @@ const ProjectReportPage = () => {
                     )}
                 </div>
             </div>
-
-            <LogDetailsModal
-                isOpen={!!selectedLog}
-                onClose={() => setSelectedLog(null)}
-                logDetails={selectedLog}
-            />
-            {selectedTaskForDetails && (
-                <TaskDetailsModal
-                    task={selectedTaskForDetails}
-                    onClose={() => setSelectedTaskForDetails(null)}
-                />
-            )}
         </div>
+
+        <LogDetailsModal
+            isOpen={!!selectedLog}
+            onClose={() => setSelectedLog(null)}
+            logDetails={selectedLog}
+        />
+        {selectedTaskForDetails && (
+            <TaskDetailsModal
+                task={selectedTaskForDetails}
+                onClose={() => setSelectedTaskForDetails(null)}
+            />
+        )}
+    </div>
     );
 };
 

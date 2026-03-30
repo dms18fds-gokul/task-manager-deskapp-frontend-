@@ -1,5 +1,10 @@
 import React from "react";
-import { FaTimes, FaCalendarAlt, FaClock, FaInfoCircle, FaBriefcaseMedical, FaCheckCircle, FaExclamationCircle, FaTimesCircle } from "react-icons/fa";
+import { 
+    FaTimes, FaCalendarAlt, FaClock, FaInfoCircle, 
+    FaBriefcaseMedical, FaCheckCircle, FaExclamationCircle, 
+    FaTimesCircle, FaHourglassHalf, FaCalendarDay,
+    FaFileAlt, FaUserEdit, FaHistory, FaUserClock, FaQuestionCircle
+} from "react-icons/fa";
 
 const LeaveDetailsModal = ({ isOpen, onClose, leave }) => {
     if (!isOpen || !leave) return null;
@@ -12,7 +17,7 @@ const LeaveDetailsModal = ({ isOpen, onClose, leave }) => {
             case "Rejected":
                 return { color: "text-rose-600", bg: "bg-rose-50", border: "border-rose-200", icon: <FaTimesCircle /> };
             default:
-                return { color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200", icon: <FaExclamationCircle /> };
+                return { color: "text-indigo-600", bg: "bg-indigo-50", border: "border-indigo-200", icon: <FaHourglassHalf className="animate-pulse" /> };
         }
     };
 
@@ -62,14 +67,24 @@ const LeaveDetailsModal = ({ isOpen, onClose, leave }) => {
 
                     {/* Details Grid */}
                     <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
-                            <span className="text-xs text-gray-500 font-bold uppercase">Type of Leave</span>
-                            <p className="text-gray-800 font-semibold mt-1">{leave.leaveCategory}</p>
+                        <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100 shadow-sm">
+                            <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block mb-2">Leave Category</span>
+                            <div className="flex items-center gap-3">
+                                <div className={`p-2 rounded-xl ${leave.leaveCategory === "Day Leave" ? "bg-amber-50 text-amber-600" : "bg-sky-50 text-sky-600"}`}>
+                                    {leave.leaveCategory === "Day Leave" ? <FaCalendarDay size={14} /> : <FaClock size={14} />}
+                                </div>
+                                <p className="text-slate-800 font-black text-sm">{leave.leaveCategory}</p>
+                            </div>
                         </div>
-                        <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
-                            <span className="text-xs text-gray-500 font-bold uppercase">Leave Category</span>
-                            <p className="text-gray-800 font-semibold mt-1 flex items-center gap-2">
-                                <FaBriefcaseMedical className="text-indigo-400 text-xs" />
+                        <div className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100 shadow-sm">
+                            <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block mb-2">Leave Type</span>
+                            <p className="text-slate-800 font-black text-sm flex items-center gap-2">
+                                <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600">
+                                    {leave.leaveType === "Health Issue" ? <FaBriefcaseMedical size={14} /> : 
+                                     leave.leaveType === "Events" ? <FaCalendarCheck size={14} /> :
+                                     leave.leaveType === "Personal Reasons" ? <FaUserClock size={14} /> :
+                                     <FaQuestionCircle size={14} />}
+                                </div>
                                 {leave.leaveType}
                             </p>
                         </div>

@@ -11,6 +11,7 @@ const EmployeeScreenshotControlPage = () => {
     const [searchQuery, setSearchQuery] = useState('');
 
     // Password Modal State
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
     const [adminPassword, setAdminPassword] = useState('');
     const [passwordError, setPasswordError] = useState('');
@@ -25,11 +26,10 @@ const EmployeeScreenshotControlPage = () => {
 
     const fetchEmployees = async () => {
         try {
-            const res = await axios.get(`${API_URL}/employee/all`);
+            const res = await axios.get(`${API_URL}/employee/all?includeInactiveProfiles=true`);
             setEmployees(res.data);
             setError('');
         } catch (err) {
-            console.error("Error fetching employees:", err);
             setError("Failed to load employees");
         } finally {
             setLoading(false);
@@ -95,7 +95,6 @@ const EmployeeScreenshotControlPage = () => {
                 setSelectedToggleType(null);
             }
         } catch (err) {
-            console.error(`Error toggling ${type} activity:`, err);
             // Revert on failure
             setEmployees(previousEmployees);
 
@@ -140,12 +139,41 @@ const EmployeeScreenshotControlPage = () => {
     );
 
     return (
-        <div className="flex h-screen bg-slate-50 font-sans">
+        <div className="flex h-screen bg-slate-50 font-sans relative">
+            {/* Desktop Sidebar */}
             <Sidebar className="w-64 flex-shrink-0 hidden md:flex" />
 
-            <div className="flex-1 overflow-x-hidden overflow-y-auto w-full">
-                {/* Header */}
-                <div className="bg-white border-b border-slate-200 px-8 py-6 sticky top-0 z-20">
+            {/* Mobile Sidebar Overlay */}
+            {isSidebarOpen && (
+                <div className="fixed inset-0 z-40 md:hidden">
+                    {/* Backdrop */}
+                    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)}></div>
+                    {/* Sidebar container */}
+                    <div className="absolute inset-y-0 left-0 z-50">
+                        <Sidebar className="flex h-full shadow-2xl" onClose={() => setIsSidebarOpen(false)} />
+                    </div>
+                </div>
+            )}
+
+            <div className="flex-1 overflow-x-hidden overflow-y-auto w-full flex flex-col">
+                {/* Mobile Header */}
+                <header className="bg-white border-b border-slate-200 p-4 flex justify-between items-center md:hidden z-10 sticky top-0">
+                    <div className="flex items-center gap-2 text-indigo-600">
+                        <Settings className="h-5 w-5" />
+                        <h1 className="text-lg font-bold text-slate-800 uppercase tracking-tight">Screenshot Control</h1>
+                    </div>
+                    <button
+                        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                        className="p-2 rounded-lg bg-slate-50 text-slate-600 hover:bg-slate-100 transition-colors border border-slate-200"
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
+                </header>
+
+                {/* Desktop Header Content */}
+                <div className="bg-white border-b border-slate-200 px-8 py-6 shrink-0">
                     <div className="flex flex-col gap-1 max-w-7xl mx-auto">
                         <div className="flex items-center gap-2 text-indigo-600 mb-2">
                             <Settings className="h-5 w-5" />

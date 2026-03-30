@@ -2,8 +2,11 @@ const hostname = (typeof window !== 'undefined' && window.location.hostname) ? w
 
 const BASE_URL = `http://${hostname}:5000`;
 
-export const API_URL = `https://task-manager-fox-frontend.onrender.com/api`;
-export const LOCAL_UPLOAD_URL = `http://192.168.1.1:5001`;
+export const API_URL = `http://localhost:5000/api`;
+
+// This must be the STATIC IP of the host machine running the Local File Server
+// Fallback to active hostname if not 192.168.1.34
+export const LOCAL_UPLOAD_URL = hostname === 'localhost' ? `http://192.168.1.34:5001` : `http://${hostname}:5001`;
 
 export const getSocketUrl = () => {
     if (API_URL.endsWith("/api")) {

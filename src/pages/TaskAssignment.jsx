@@ -1,69 +1,24 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { API_URL } from "../utils/config";
 import Sidebar from "../components/Sidebar";
-import { FaCloudUploadAlt, FaMicrophone, FaStop, FaTimes, FaPlus, FaChevronDown } from "react-icons/fa";
+import EmployeeSidebar from "../components/EmployeeSidebar";
+import { FaCloudUploadAlt, FaMicrophone, FaStop, FaTrash, FaCheckCircle, FaExclamationCircle, FaFileAlt, FaPaperclip, FaSearch, FaTimes, FaAngleDoubleUp, FaAngleUp, FaMinus, FaAngleDown, FaAngleDoubleDown } from "react-icons/fa";
 
-const CustomDropdown = ({ options, value, onChange, placeholder, displayKey, valueKey, className }) => {
-    const [isOpen, setIsOpen] = useState(false);
-    const dropdownRef = useRef(null);
+import CustomDropdown from "../components/CustomDropdown";
+import GroupTaskAssignment from "./GroupTaskAssignment";
+import { syncPriorityToDate, syncDateToPriority } from "../utils/prioritySync";
 
-    useEffect(() => {
-        const handleClickOutside = (event) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-                setIsOpen(false);
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, []);
-
-    // Helper to extract value since options can be objects or strings
-    const getOptionValue = (opt) => (valueKey ? opt[valueKey] : opt);
-    const getOptionLabel = (opt) => (displayKey ? opt[displayKey] : opt);
-
-    const selectedOption = options.find(opt => getOptionValue(opt) === value);
-    const displayValue = selectedOption ? getOptionLabel(selectedOption) : placeholder;
-
-    return (
-        <div className={`relative w-full ${className || ""}`} ref={dropdownRef}>
-            <div
-                className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 bg-white flex justify-between items-center cursor-pointer"
-                onClick={() => setIsOpen(!isOpen)}
-            >
-                <span className={!value ? "text-gray-400" : "text-gray-800"}>
-                    {displayValue}
-                </span>
-                <FaChevronDown className={`text-gray-500 text-sm transition-transform ${isOpen ? "rotate-180" : ""}`} />
-            </div>
-            {isOpen && (
-                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto scrollbar-hide">
-                    {options.length > 0 ? (
-                        options.map((opt, idx) => (
-                            <div
-                                key={idx}
-                                className="px-4 py-3 hover:bg-blue-50 cursor-pointer text-gray-700 text-sm border-b last:border-none border-gray-100"
-                                onClick={() => {
-                                    onChange(getOptionValue(opt));
-                                    setIsOpen(false);
-                                }}
-                            >
-                                {getOptionLabel(opt)}
-                            </div>
-                        ))
-                    ) : (
-                        <div className="px-4 py-3 text-gray-400 text-sm">No options available</div>
-                    )}
-                </div>
-            )}
-        </div>
-    );
-};
-
-
-const TaskAssignment = () => {
+const TaskAssignment = ({ isModal = false, onClose, onSuccess, onTabChange }) => {
     const navigate = useNavigate();
+    const location = useLocation();
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+    const [userRole, setUserRole] = useState(null);
+    const [isEditing, setIsEditing] = useState(false);
+    const [isStatusRestricted, setIsStatusRestricted] = useState(false);
+    const [isRoleRestricted, setIsRoleRestricted] = useState(false);
+    const [userDesignation, setUserDesignation] = useState("");
+    const canAddOptions = true; // All authenticated users can add (private to themselves)
 
     // --- State ---
     const [formData, setFormData] = useState({
@@ -75,14 +30,11 @@ const TaskAssignment = () => {
         roles: [],
         assignType: "Single", // Single, Department, Project, Overall
         assignee: [], // Array of IDs or Names
-        priority: "Medium",
+        priority: syncDateToPriority(new Date().toISOString().split("T")[0]),
         startDate: "", // "YYYY-MM-DD"
         startTime: "", // "HH:MM"
-        department: [], // Changed to Array for Multi-select
-        teamLead: "", // Selected Team Lead ID
-        projectLead: "", // Selected Project Lead ID
+        // taskLead: "", // Removed for Individual Tasks
         dueDate: "",
-
         documents: null,
         audioFile: null
     });
@@ -92,26 +44,152 @@ const TaskAssignment = () => {
     const [audioUrl, setAudioUrl] = useState(null);
     const [employees, setEmployees] = useState([]);
     const [options, setOptions] = useState({ department: [] }); // For Department Dropdown
-    const [departments, setDepartments] = useState([]); // List of department names
-    const [teamLeads, setTeamLeads] = useState([]);
-    const [teams, setTeams] = useState([]); // If Teams exist
-    const [projectLeads, setProjectLeads] = useState([]);
+    const [departments, setDepartments] = useState([]);
+    const [activeMediaTab, setActiveMediaTab] = useState("Description");
+    const [assignSearchQuery, setAssignSearchQuery] = useState("");
+    const [showAssignDropdown, setShowAssignDropdown] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
+    const [projects, setProjects] = useState([]);
+    const [modalTab, setModalTab] = useState(() => {
+        if (location.pathname.includes("group-task")) {
+            return "Group Task";
+        }
+        return "Individual Task";
+    });
+
+    useEffect(() => {
+        if (!isModal) {
+            if (location.pathname.includes("group-task")) {
+                setModalTab("Group Task");
+            } else {
+                setModalTab("Individual Task");
+            }
+        }
+    }, [location.pathname, isModal]);
 
     const fileInputRef = useRef(null);
     const audioInputRef = useRef(null);
     const mediaRecorderRef = useRef(null);
+    const assignDropdownRef = useRef(null);
+    const assignInputRef = useRef(null);
+
+    useEffect(() => {
+        if (isModal && onTabChange) {
+            onTabChange(modalTab);
+        }
+    }, [modalTab, isModal, onTabChange]);
 
     // --- Effects ---
     useEffect(() => {
+        // Get User Role
+        const storedUser = localStorage.getItem("user");
+        if (storedUser) {
+            try {
+                const usr = JSON.parse(storedUser);
+                setUserRole(usr.role);
+                setUserDesignation(usr.designation || "");
+            } catch (e) { }
+        }
+
         // Auto-fill Date and Time
         const now = new Date();
         const dateStr = now.toISOString().split("T")[0];
         const timeStr = now.toTimeString().slice(0, 5);
-        setFormData(prev => ({ ...prev, startDate: dateStr, startTime: timeStr }));
+        setFormData(prev => ({ ...prev, startDate: dateStr, startTime: timeStr, dueDate: dateStr }));
 
-        // Fetch Employees
+        // Close assign dropdown on click outside
+        const handleClickOutside = (event) => {
+            if (assignDropdownRef.current && !assignDropdownRef.current.contains(event.target)) {
+                setShowAssignDropdown(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    // Prefill data if editing a task
+    useEffect(() => {
+        if (location.state && location.state.taskToEdit) {
+            const task = location.state.taskToEdit;
+            setIsEditing(true);
+
+            // Need to process date strings properly
+            let formattedStartDate = "";
+            let formattedStartTime = "";
+            if (task.startDate) {
+                try {
+                    const dateObj = new Date(task.startDate);
+                    formattedStartDate = dateObj.toISOString().split("T")[0];
+                    formattedStartTime = dateObj.toTimeString().slice(0, 5);
+                } catch (e) { }
+            }
+            if (task.startTime) {
+                formattedStartTime = task.startTime;
+            }
+
+            let formattedDueDate = "";
+            if (task.dueDate) {
+                try {
+                    formattedDueDate = new Date(task.dueDate).toISOString().split("T")[0];
+                } catch (e) { }
+            }
+
+            // Map task properties to formData structure
+            setFormData({
+                _id: task._id, // Keep ID for potential update logic
+                projectName: task.projectName || "",
+                taskTitle: task.taskTitle || "",
+                description: task.description || "",
+                taskType: task.taskType || "Individual Task",
+                roles: Array.isArray(task.roles) ? task.roles : [],
+                assignType: task.assignType || "Single",
+                assignee: Array.isArray(task.assignedTo) && task.assignedTo.length > 0 ? task.assignedTo.map(a => typeof a === 'object' ? a._id : a) : task.assignee || [],
+                priority: task.priority || syncDateToPriority(task.dueDate || new Date().toISOString().split("T")[0]),
+                startDate: formattedStartDate || "",
+                startTime: formattedStartTime || "",
+                // taskLead: typeof task.taskLead === 'object' ? task.taskLead?._id : (task.taskLead || ""), // Removed for Individual Tasks
+                dueDate: formattedDueDate || "",
+                documents: null,
+                audioFile: null
+            });
+
+            // Check if status is Pending
+            if (task.status && task.status !== "Pending") {
+                setIsStatusRestricted(true);
+            } else {
+                setIsStatusRestricted(false);
+            }
+
+            // Check Role Restriction (Super Admin OR Creator)
+            const storedUserStr = localStorage.getItem("user");
+            let isCreator = false;
+            let isSuperAdmin = false;
+            if (storedUserStr) {
+                try {
+                    const usr = JSON.parse(storedUserStr);
+                    const creatorId = typeof task.assignedBy === 'object' && task.assignedBy !== null ? task.assignedBy._id : task.assignedBy;
+                    if (creatorId && usr._id === creatorId) isCreator = true;
+                    if (usr.role === "Super Admin" || (Array.isArray(usr.role) && usr.role.includes("Super Admin"))) {
+                        isSuperAdmin = true;
+                    }
+                } catch (e) { }
+            }
+
+            if (!isCreator && !isSuperAdmin) {
+                setIsRoleRestricted(true);
+            } else {
+                setIsRoleRestricted(false);
+            }
+
+            // Clear state after reading so a page refresh doesn't trigger edit mode again if unintended
+            window.history.replaceState({}, document.title)
+        }
+    }, [location.state]);
+
+
+    // Fetch Employees
+    useEffect(() => {
         const fetchEmployees = async () => {
             if (!navigator.onLine) {
                 const cached = localStorage.getItem('cachedAssignmentEmployees');
@@ -129,7 +207,6 @@ const TaskAssignment = () => {
                     if (cached) setEmployees(JSON.parse(cached));
                 }
             } catch (err) {
-                console.error("Failed to fetch employees", err);
                 const cached = localStorage.getItem('cachedAssignmentEmployees');
                 if (cached) setEmployees(JSON.parse(cached));
             }
@@ -148,7 +225,10 @@ const TaskAssignment = () => {
                 return;
             }
             try {
-                const res = await fetch(`${API_URL}/options/all`);
+                const token = localStorage.getItem('token');
+                const res = await fetch(`${API_URL}/options/all`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
                 if (res.ok) {
                     const data = await res.json();
                     setOptions(data);
@@ -166,7 +246,6 @@ const TaskAssignment = () => {
                     }
                 }
             } catch (err) {
-                console.error("Failed to fetch options", err);
                 const cached = localStorage.getItem('cachedAssignmentOptions');
                 if (cached) {
                     const data = JSON.parse(cached);
@@ -176,38 +255,23 @@ const TaskAssignment = () => {
             }
         };
         fetchOptions();
-    }, []);
 
-    // Filter Leads based on selected Department(s)
-    useEffect(() => {
-        if (formData.department.length > 0 && employees.length > 0) {
-            // Filter employees belonging to ANY of the selected departments
-            const deptMembers = employees.filter(emp =>
-                emp.role && emp.role.some(r => formData.department.includes(r))
-            );
-
-            // Team Leads: Show only users with "Lead" in their designation (Team Lead, Tech Lead, etc.)
-            const tLeads = deptMembers.filter(emp =>
-                (emp.designation || "").toLowerCase().includes("lead")
-            );
-
-            // User requirement: "Project Leads dropdown should show all the members from that department"
-            const pLeads = deptMembers;
-
-            setTeamLeads(tLeads);
-            setProjectLeads(pLeads);
-
-            // Auto-select Team Lead if available (take the first one)
-            if (tLeads.length > 0) {
-                setFormData(prev => ({ ...prev, teamLead: tLeads[0]._id }));
-            } else {
-                setFormData(prev => ({ ...prev, teamLead: "" }));
+        // Fetch Projects
+        const fetchProjects = async () => {
+            try {
+                const token = localStorage.getItem("token");
+                const res = await fetch(`${API_URL}/options?category=Project`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    setProjects(data);
+                }
+            } catch (err) {
             }
-        } else {
-            setTeamLeads([]);
-            setProjectLeads([]);
-        }
-    }, [formData.department, employees]);
+        };
+        fetchProjects();
+    }, []);
 
     // --- Handlers ---
     const handleChange = (e) => {
@@ -216,7 +280,13 @@ const TaskAssignment = () => {
     };
 
     const handleDropdownChange = (name, value) => {
-        setFormData(prev => ({ ...prev, [name]: value }));
+        setFormData(prev => {
+            const newData = { ...prev, [name]: value };
+            if (name === "priority") {
+                newData.dueDate = syncPriorityToDate(value);
+            }
+            return newData;
+        });
     };
 
     const handleDepartmentToggle = (dept) => {
@@ -278,7 +348,6 @@ const TaskAssignment = () => {
             mediaRecorderRef.current.start();
             setIsRecording(true);
         } catch (err) {
-            console.error("Error accessing microphone:", err);
             alert("Could not access microphone. Please allow permissions.");
         }
     };
@@ -289,16 +358,79 @@ const TaskAssignment = () => {
         }
     };
 
+    const handleAddProject = async (newProjectNameStr) => {
+        if (!navigator.onLine) {
+            alert("Cannot add project while offline.");
+            return;
+        }
+        try {
+            const token = localStorage.getItem("token");
+            const res = await fetch(`${API_URL}/options`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({ category: "Project", value: newProjectNameStr })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setProjects(prev => [...prev, data]);
+                setFormData(prev => ({ ...prev, projectName: data.value }));
+            } else {
+                alert(data.message || "Failed to add project");
+            }
+        } catch (err) {
+            alert("Error adding project");
+        }
+    };
+
+    const handleDeleteProject = async (option) => {
+        if (!navigator.onLine) {
+            alert("Cannot delete project while offline.");
+            return;
+        }
+        if (!option._id) {
+            alert("Cannot delete this project format.");
+            return;
+        }
+        if (window.confirm(`Are you sure you want to delete project: ${option.value}?`)) {
+            try {
+                const token = localStorage.getItem("token");
+                const res = await fetch(`${API_URL}/options/${option._id}`, {
+                    method: "DELETE",
+                    headers: {
+                        "Authorization": `Bearer ${token}`
+                    }
+                });
+                if (res.ok) {
+                    setProjects(prev => prev.filter(p => p._id !== option._id));
+                    if (formData.projectName === option.value) {
+                        setFormData(prev => ({ ...prev, projectName: "" }));
+                    }
+                } else {
+                    const data = await res.json();
+                    alert(data.message || "Failed to delete project");
+                }
+            } catch (err) {
+                alert("Error deleting project");
+            }
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
 
-        // Basic Validation
-        if (!formData.projectName || !formData.taskTitle) {
-            alert("Project Name and Task Title are required!");
+        const isAssigneeValid = formData.assignType === "Overall" || (Array.isArray(formData.assignee) && formData.assignee.length > 0);
+
+        // Strict Validation: Only Due Date, Documents, and Audio are optional
+        if (!formData.projectName || !formData.taskTitle || !formData.description ||
+            !formData.priority || !formData.startDate || !formData.startTime || !isAssigneeValid) {
+
+            alert("Please fill all mandatory fields.");
             return;
         }
 
-        // console.log("Submitting Task:", formData);
 
         // Ensure "Overall" has empty assignees (Backend handles this, but cleaner to send empty)
         let finalAssignee = formData.assignee;
@@ -371,12 +503,10 @@ const TaskAssignment = () => {
                     roles: [],
                     assignType: "Single",
                     assignee: [],
-                    priority: "Medium",
+                    priority: syncDateToPriority(new Date().toISOString().split("T")[0]),
                     startDate: new Date().toISOString().split("T")[0],
                     startTime: new Date().toTimeString().slice(0, 5),
-                    department: [],
-                    teamLead: "",
-                    projectLead: "",
+                    // taskLead: "", // Removed for Individual Tasks
                     dueDate: "",
                     documents: null,
                     audioFile: null
@@ -385,7 +515,6 @@ const TaskAssignment = () => {
                 setAudioBlob(null);
 
             } catch (error) {
-                console.error("Error saving offline assignment:", error);
                 alert("Failed to save assignment offline.");
             } finally {
                 setIsSubmitting(false);
@@ -394,6 +523,11 @@ const TaskAssignment = () => {
         }
 
         // --- ONLINE FLOW ---
+
+        // Determine method based on whether we're editing or creating
+        const isUpdate = !!formData._id && isEditing;
+        const apiEndpoint = isUpdate ? `${API_URL}/tasks/${formData._id}` : `${API_URL}/tasks`;
+        const apiMethod = isUpdate ? "PUT" : "POST";
 
         // Use FormData API for file uploads
         const payload = new FormData();
@@ -406,7 +540,7 @@ const TaskAssignment = () => {
         }
 
         Object.keys(formData).forEach(key => {
-            if (key === 'roles' || key === 'assignee' || key === 'department' || key === 'projectLead') {
+            if (key === 'roles' || key === 'assignee') {
                 // explicit handling for assignee based on type?
                 // If assignType is overall, assignee is empty.
                 const val = (key === 'assignee' && formData.assignType === 'Overall') ? [] : formData[key];
@@ -418,8 +552,8 @@ const TaskAssignment = () => {
 
         try {
             setIsSubmitting(true);
-            const res = await fetch(`${API_URL}/tasks`, {
-                method: "POST",
+            const res = await fetch(apiEndpoint, {
+                method: apiMethod,
                 body: payload,
             });
 
@@ -430,7 +564,11 @@ const TaskAssignment = () => {
             }
 
             // Show Success Modal instead of Alert
-            setShowSuccessModal(true);
+            if (isModal && onSuccess) {
+                onSuccess();
+            } else {
+                setShowSuccessModal(true);
+            }
 
             // Reset Form (keep date/time)
             setFormData(prev => ({
@@ -442,11 +580,11 @@ const TaskAssignment = () => {
                 roles: [],
                 assignType: "Single",
                 assignee: [],
-                priority: "Medium",
+                priority: syncDateToPriority(new Date().toISOString().split("T")[0]),
                 startDate: new Date().toISOString().split("T")[0],
                 startTime: new Date().toTimeString().slice(0, 5),
                 department: [],
-                teamLead: "",
+                // taskLead: "", // Removed for Individual Tasks
                 projectLead: "",
                 dueDate: "",
                 documents: null,
@@ -456,7 +594,6 @@ const TaskAssignment = () => {
             setAudioBlob(null);
 
         } catch (error) {
-            console.error(error);
             alert(error.message || "Error submitting task");
         } finally {
             setIsSubmitting(false);
@@ -489,17 +626,296 @@ const TaskAssignment = () => {
         );
     };
 
+    const renderIndividualForm = () => (
+        <form className="space-y-2" onSubmit={handleSubmit}>
+            {/* Project Name */}
+            <div className="space-y-2">
+                <label className="block text-sm font-bold text-gray-800">Project Name</label>
+                <CustomDropdown
+                    options={projects}
+                    value={formData.projectName}
+                    onChange={(val) => handleDropdownChange("projectName", val)}
+                    placeholder="Select Project"
+                    searchable={true}
+                    allowAdd={canAddOptions}
+                    onAdd={handleAddProject}
+                    onDelete={handleDeleteProject}
+                    className="h-[50px]"
+                />
+            </div>
+
+            {/* Task Title */}
+            <div className="space-y-2">
+                <label className="block text-sm font-bold text-gray-800">Task Title</label>
+                <input type="text" name="taskTitle" value={formData.taskTitle} onChange={handleChange}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition bg-gray-50/50 focus:bg-white text-sm text-gray-800 font-medium placeholder-gray-400 font-normal h-[50px]" placeholder="Enter task name..." required />
+            </div>
+
+
+            {/* Priority & Due Date Row */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                    <label className="block text-sm font-bold text-gray-800">Due Date</label>
+                    <input type="date" name="dueDate" value={formData.dueDate || ""}
+                        onChange={(e) => {
+                            const newDate = e.target.value;
+                            setFormData(prev => ({
+                                ...prev,
+                                dueDate: newDate,
+                                priority: syncDateToPriority(newDate)
+                            }));
+                        }}
+                        className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition bg-gray-50/50 focus:bg-white text-sm text-gray-800 font-medium h-[50px]" />
+                </div>
+
+                <div className="space-y-2">
+                    <label className="block text-sm font-bold text-gray-800">Priority</label>
+                    <CustomDropdown
+                        options={["Very High", "High", "Medium", "Low", "Very Low"].map(p => {
+                            const configs = {
+                                "Very High": { color: "text-rose-600", icon: <FaAngleDoubleUp /> },
+                                "High": { color: "text-orange-600", icon: <FaAngleUp /> },
+                                "Medium": { color: "text-amber-600", icon: <FaMinus /> },
+                                "Low": { color: "text-blue-600", icon: <FaAngleDown /> },
+                                "Very Low": { color: "text-slate-500", icon: <FaAngleDoubleDown /> }
+                            };
+                            const { color, icon } = configs[p];
+                            return {
+                                value: p,
+                                label: p,
+                                customLabel: (
+                                    <div className={`flex items-center gap-2 ${color} font-bold text-[12px] uppercase tracking-wider py-0.5`}>
+                                        <span className="text-xs">{icon}</span>
+                                        {p}
+                                    </div>
+                                )
+                            };
+                        })}
+                        value={formData.priority}
+                        onChange={(val) => handleDropdownChange("priority", val)}
+                        placeholder="Select Priority"
+                        className="h-[50px]"
+                    />
+                </div>
+            </div>
+
+            {/* Assignment Section */}
+            <div className="space-y-4 pt-4">
+                <div className="flex justify-between items-center">
+                    <h3 className="text-sm font-bold text-gray-800">Assign To</h3>
+                    <div className="flex bg-gray-100/80 p-1 rounded-xl border border-gray-200/50">
+                        {[
+                            { id: "Single", label: "Members" },
+                            { id: "Department", label: "Team" },
+                            { id: "Overall", label: "Everyone" }
+                        ].map((type) => (
+                            <button
+                                key={type.id}
+                                type="button"
+                                onClick={() => handleAssignTypeChange(type.id)}
+                                className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all duration-200 ${formData.assignType === type.id
+                                    ? "bg-white text-indigo-600 shadow-sm border border-gray-100"
+                                    : "text-gray-500 hover:text-gray-700 hover:bg-white/50"
+                                    }`}
+                            >
+                                {type.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+                {formData.assignType !== "Overall" && (
+                    <div className="relative group" ref={assignDropdownRef}>
+                        <div
+                            className={`h-[50px] w-full p-2 pl-4 rounded-xl border transition-all duration-200 bg-white flex items-center gap-2 focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500 cursor-pointer ${showAssignDropdown ? 'border-indigo-400 shadow-sm' : 'border-gray-200 shadow-sm hover:border-gray-300'}`}
+                            onMouseDown={(e) => {
+                                if (e.button !== 0) return;
+                                e.preventDefault();
+                                setShowAssignDropdown(true);
+                                if (assignInputRef.current) assignInputRef.current.focus();
+                            }}
+                            onClick={() => {
+                                setShowAssignDropdown(true);
+                                if (assignInputRef.current) assignInputRef.current.focus();
+                            }}
+                        >
+                            <FaSearch className="text-gray-400 text-sm shrink-0" />
+                            <div className="overflow-x-auto flex flex-nowrap gap-2 items-center scrollbar-hide py-1">
+                                {(formData.assignee || []).map((val) => {
+                                    const item = formData.assignType === "Single" ? employees.find(e => e._id === val) : { name: val };
+                                    if (!item) return null;
+                                    return (
+                                        <div key={val} className="shrink-0 flex items-center gap-1.5 bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-lg text-xs font-bold border border-indigo-100 shadow-sm">
+                                            <span className="whitespace-nowrap">{item.name || item}</span>
+                                            <button type="button" onClick={(e) => { e.stopPropagation(); setFormData(prev => ({ ...prev, assignee: prev.assignee.filter(id => id !== val) })); }}>
+                                                <FaTimes className="text-[10px]" />
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <input
+                                ref={assignInputRef}
+                                type="text"
+                                value={assignSearchQuery}
+                                onChange={(e) => { setAssignSearchQuery(e.target.value); setShowAssignDropdown(true); }}
+                                onFocus={() => setShowAssignDropdown(true)}
+                                placeholder={formData.assignee.length === 0 ? `Add ${formData.assignType === "Single" ? 'members' : 'teams'}...` : ""}
+                                className="flex-1 bg-transparent border-none outline-none text-sm text-gray-800 font-medium pb-0.5 placeholder:text-gray-400 font-normal truncate"
+                            />
+                        </div>
+                        {showAssignDropdown && (
+                            <div className="absolute top-[calc(100%+8px)] left-0 w-full bg-white rounded-2xl shadow-2xl border border-gray-100 py-1.5 z-[60] max-h-[160px] overflow-y-auto custom-scrollbar">
+                                {(formData.assignType === "Single" ? employees : departments)
+                                    .filter(opt => {
+                                        const label = formData.assignType === "Single" ? opt.name : opt;
+                                        return label.toLowerCase().includes(assignSearchQuery.toLowerCase());
+                                    })
+                                    .map((opt) => {
+                                        const val = formData.assignType === "Single" ? opt._id : opt;
+                                        const isSelected = formData.assignee.includes(val);
+                                        return (
+                                            <button
+                                                key={val}
+                                                type="button"
+                                                onClick={() => {
+                                                    setFormData(prev => {
+                                                        const exists = prev.assignee.includes(val);
+                                                        return { ...prev, assignee: exists ? prev.assignee.filter(id => id !== val) : [...prev.assignee, val] };
+                                                    });
+                                                    setAssignSearchQuery("");
+                                                }}
+                                                className={`w-full px-4 py-2 flex items-center justify-between text-sm hover:bg-gray-50 border-b border-gray-50 last:border-0 ${isSelected ? 'bg-indigo-50/50 text-indigo-700 font-bold' : 'text-gray-700'}`}
+                                            >
+                                                {formData.assignType === "Single" ? (
+                                                    <div className="flex items-center gap-1.5 overflow-hidden pr-2">
+                                                        <span className="shrink-0 font-semibold">{opt.name}</span>
+                                                        <span className="shrink-0 text-gray-400">—</span>
+                                                        <span className="truncate max-w-[180px] text-gray-500 text-xs">
+                                                            {Array.isArray(opt.role) ? opt.role.join(", ") : (opt.role || "No Dept")}
+                                                        </span>
+                                                        <span className="shrink-0 text-gray-400">—</span>
+                                                        <span className="shrink-0 font-mono text-xs text-indigo-600">{opt.employeeId}</span>
+                                                    </div>
+                                                ) : (
+                                                    <span>{opt}</span>
+                                                )}
+                                                {isSelected && <FaCheckCircle className="text-indigo-500 text-sm ml-2 shrink-0" />}
+                                            </button>
+                                        );
+                                    })}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* Media Tabs */}
+            <div className="space-y-4 pt-2">
+                <div className="flex items-center border-b border-gray-100">
+                    {[
+                        { id: "Description", label: "Description", icon: FaFileAlt },
+                        { id: "Attachments", label: "Attachments", icon: FaPaperclip },
+                        { id: "Audio", label: "Audio", icon: FaMicrophone }
+                    ].map((tab) => {
+                        const isActive = activeMediaTab === tab.id;
+                        return (
+                            <button
+                                key={tab.id}
+                                type="button"
+                                onClick={() => setActiveMediaTab(tab.id)}
+                                className={`relative flex items-center gap-2 px-4 py-3 text-sm font-bold transition-all duration-300 ${isActive ? 'text-indigo-600' : 'text-gray-400 hover:text-gray-600'}`}
+                            >
+                                <tab.icon size={14} className={isActive ? 'text-indigo-500' : 'text-gray-300'} />
+                                {tab.label}
+                                {isActive && <div className="absolute bottom-0 left-0 w-full h-[2.5px] bg-indigo-600 rounded-full" />}
+                            </button>
+                        );
+                    })}
+                </div>
+
+                <div className="min-h-[140px]">
+                    {activeMediaTab === "Description" && (
+                        <textarea
+                            rows="4"
+                            name="description"
+                            value={formData.description}
+                            onChange={handleChange}
+                            className="w-full px-4 py-3 rounded-xl border border-indigo-100 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all bg-purple-50/30 text-sm text-gray-800 font-medium"
+                            placeholder="Describe the task details here..."
+                            required
+                        />
+                    )}
+                    {activeMediaTab === "Attachments" && (
+                        <div onClick={() => fileInputRef.current.click()} className="border-2 border-dashed border-indigo-100 rounded-2xl p-6 flex flex-col items-center justify-center bg-indigo-50/20 hover:bg-indigo-50/40 transition-all cursor-pointer h-32">
+                            {formData.documents ? (
+                                <div className="text-center">
+                                    <FaFileAlt size={20} className="text-indigo-600 mx-auto mb-2" />
+                                    <p className="text-xs font-bold text-gray-800 truncate max-w-[200px] mb-1">{formData.documents.name}</p>
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); setFormData(prev => ({ ...prev, documents: null })); }} className="text-red-500 text-[10px] font-bold underline">Remove</button>
+                                </div>
+                            ) : (
+                                <><FaCloudUploadAlt className="w-5 h-5 text-indigo-500 mb-2" /><span className="text-xs font-bold text-indigo-600">Upload Attachments</span></>
+                            )}
+                        </div>
+                    )}
+                    {activeMediaTab === "Audio" && (
+                        <div className="border border-indigo-100 rounded-2xl p-4 bg-indigo-50/20 h-32 flex flex-col justify-center items-center">
+                            {audioUrl ? (
+                                <div className="w-full flex flex-col items-center">
+                                    <audio src={audioUrl} controls className="w-full h-8 mb-3" />
+                                    <button onClick={() => { setAudioUrl(null); setFormData(prev => ({ ...prev, audioFile: null })); }} className="text-xs font-bold text-red-500 underline flex items-center gap-1.5"><FaTrash size={10} /> Delete</button>
+                                </div>
+                            ) : (
+                                <div className="flex gap-4">
+                                    <button type="button" onClick={isRecording ? stopRecording : startRecording} className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all shadow-lg ${isRecording ? 'bg-red-500 animate-pulse text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
+                                        {isRecording ? <FaStop size={20} /> : <FaMicrophone size={20} />}
+                                    </button>
+                                    <button type="button" onClick={() => audioInputRef.current.click()} className="w-14 h-14 bg-white text-indigo-600 rounded-2xl flex items-center justify-center border border-indigo-100 shadow-md"><FaCloudUploadAlt size={22} /></button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Submit Button */}
+            <div className="pt-2 border-t">
+                <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className={`w-full py-3.5 bg-indigo-600 text-white rounded-xl font-bold shadow-lg transition-all duration-300 text-sm ${isSubmitting ? "opacity-50 cursor-not-allowed" : "hover:bg-indigo-700 shadow-indigo-200"}`}
+                >
+                    {isSubmitting ? "Submitting..." : (isEditing ? "Update Task" : "Create Task")}
+                </button>
+            </div>
+        </form>
+    );
+
+
+
     return (
-        <div className="flex h-screen overflow-hidden bg-gray-50 font-sans relative">
+        <div className={`flex ${isModal ? 'h-full flex-col' : 'h-screen'} overflow-hidden bg-gray-50 font-sans relative`}>
             {/* Desktop Sidebar */}
-            <Sidebar className="hidden md:flex" />
+            {!isModal && (
+                userRole === "Super Admin" || (Array.isArray(userRole) && userRole.includes("Super Admin")) ? (
+                    <Sidebar className="hidden md:flex" />
+                ) : (
+                    <EmployeeSidebar className="hidden md:flex" />
+                )
+            )}
 
             {/* Mobile Sidebar Overlay */}
-            {isSidebarOpen && (
+            {!isModal && isSidebarOpen && (
                 <div className="fixed inset-0 z-40 md:hidden">
-                    <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setIsSidebarOpen(false)}></div>
+                    {/* Backdrop */}
+                    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)}></div>
+                    {/* Sidebar container */}
                     <div className="absolute inset-y-0 left-0 z-50">
-                        <Sidebar className="flex h-full shadow-xl" />
+                        {userRole === "Super Admin" || (Array.isArray(userRole) && userRole.includes("Super Admin")) ? (
+                            <Sidebar className="flex h-full shadow-2xl" onClose={() => setIsSidebarOpen(false)} />
+                        ) : (
+                            <EmployeeSidebar className="flex h-full shadow-2xl" onClose={() => setIsSidebarOpen(false)} />
+                        )}
                     </div>
                 </div>
             )}
@@ -524,354 +940,92 @@ const TaskAssignment = () => {
                         </div>
                     </div>
                 )}
-                {/* Header */}
-                <header className="bg-white shadow-sm p-4 flex justify-between items-center md:hidden z-10">
-                    <h1 className="text-xl font-bold text-gray-800">Task Manager</h1>
-                    <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="text-gray-600 p-2 rounded hover:bg-gray-100">
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
-                    </button>
-                </header>
+                {/* Modal Header */}
+                {isModal && (
+                    <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 shrink-0">
+                        <h2 className="text-xl font-bold text-gray-800 tracking-tight">Create Main Task</h2>
+                        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-2 rounded-full hover:bg-gray-100 transition-all">
+                            <FaTimes />
+                        </button>
+                    </div>
+                )}
 
-                <main className="flex-1 p-4 sm:p-6 overflow-y-auto w-full max-w-full overflow-x-hidden">
-                    <div className="w-full max-w-full lg:max-w-5xl mx-auto bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-                        <div className="p-5 sm:p-8">
-                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 border-b pb-4 gap-4">
-                                <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900">Create New Individual Task</h2>
-                                <div className="flex bg-gray-100 p-1 rounded-lg">
-                                    <button
-                                        type="button"
-                                        className="px-4 py-2 text-sm font-medium rounded-md shadow-sm bg-indigo-600 text-white"
-                                    >
-                                        Create New Individual Task
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => navigate('/assign-group-task')}
-                                        className="px-4 py-2 text-sm font-medium rounded-md text-gray-700 hover:text-indigo-600 hover:bg-white transition-colors"
-                                    >
-                                        Create New Group Task
-                                    </button>
-                                </div>
+                {/* Mobile Header */}
+                {!isModal && (
+                    <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center md:hidden z-10 sticky top-0">
+                        <h1 className="text-xl font-bold text-gray-800 uppercase tracking-tight">Task Manager</h1>
+                        <button
+                            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                            className="p-2 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors border border-gray-200"
+                        >
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                            </svg>
+                        </button>
+                    </header>
+                )}
+
+                <main className={`flex-1 ${isModal ? 'p-0' : 'p-4 sm:p-6'} overflow-y-auto flex justify-center custom-scrollbar`}>
+                    <div className={`w-full ${isModal ? 'max-w-full shadow-none border-none' : 'max-w-[500px] shadow-2xl border border-gray-100'} bg-white rounded-2xl overflow-hidden h-fit`}>
+                        <div className="p-8">
+                            {/* Top Level Tabs */}
+                            <div className="flex border-b border-gray-100 mb-8 sticky top-0 bg-white z-10">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (isModal) {
+                                            setModalTab("Individual Task");
+                                            if (onTabChange) onTabChange("Individual Task");
+                                        } else {
+                                            navigate(userRole === "Employee" ? "/employee/assign-task" : "/assign-task");
+                                        }
+                                    }}
+                                    className={`flex-1 py-4 text-sm font-bold transition-all ${modalTab === "Individual Task" ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-400 hover:text-gray-600'}`}
+                                >
+                                    Individual Task
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (isModal) {
+                                            setModalTab("Group Task");
+                                            if (onTabChange) onTabChange("Group Task");
+                                        } else {
+                                            navigate(userRole === "Employee" ? "/employee/assign-group-task" : "/assign-group-task");
+                                        }
+                                    }}
+                                    className={`flex-1 py-4 text-sm font-bold transition-all ${modalTab === "Group Task" ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-400 hover:text-gray-600'}`}
+                                >
+                                    Group Task
+                                </button>
                             </div>
 
-                            <form className="space-y-8" onSubmit={handleSubmit}>
-                                {/* Basic Info Section */}
-                                <div className="space-y-6">
-                                    <div className="space-y-5">
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-700 mb-2">Project Name</label>
-                                            <input type="text" name="projectName" value={formData.projectName} onChange={handleChange}
-                                                className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition bg-gray-50 focus:bg-white" placeholder="e.g. Website Redesign" required />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-700 mb-2">Task Title</label>
-                                            <input type="text" name="taskTitle" value={formData.taskTitle} onChange={handleChange}
-                                                className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition bg-gray-50 focus:bg-white" placeholder="e.g. Homepage Hero Section" required />
-                                        </div>
-                                    </div>
-
-                                    {/* New Hierarchy Fields - Chip Selection */}
-                                    <div className="space-y-6">
-                                        {/* Department Column */}
-                                        <div className="flex flex-col">
-                                            <label className="block text-sm font-semibold text-gray-700 mb-2">Which related department</label>
-                                            <div className="w-full px-4 py-3 rounded-lg border border-gray-300 bg-gray-50 focus-within:ring-2 focus-within:ring-blue-500 focus-within:bg-white transition h-auto max-h-64 overflow-y-auto scrollbar-hide">
-                                                <div className="flex flex-wrap gap-2">
-                                                    {departments.length > 0 ? (
-                                                        departments.map((dept) => (
-                                                            <button
-                                                                key={dept}
-                                                                type="button"
-                                                                onClick={() => handleDepartmentToggle(dept)}
-                                                                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 border-2 ${formData.department.includes(dept)
-                                                                    ? "bg-blue-100 text-blue-700 border-blue-300"
-                                                                    : "bg-white text-gray-600 border-gray-200 hover:bg-gray-100"
-                                                                    }`}
-                                                            >
-                                                                {dept}
-                                                            </button>
-                                                        ))
-                                                    ) : (
-                                                        <p className="text-gray-400 text-sm italic">Loading departments...</p>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Team Leads Column */}
-                                        <div className="flex flex-col">
-                                            <label className="block text-sm font-semibold text-gray-700 mb-2">Team Lead</label>
-                                            <div className="w-full px-4 py-3 rounded-lg border border-gray-300 bg-gray-50 focus-within:ring-2 focus-within:ring-blue-500 focus-within:bg-white transition h-auto max-h-64 overflow-y-auto scrollbar-hide">
-                                                <div className="flex flex-wrap gap-2">
-                                                    {teamLeads.length > 0 ? (
-                                                        teamLeads.map((lead) => (
-                                                            <div
-                                                                key={lead._id}
-                                                                className="px-3 py-1.5 rounded-lg text-sm font-medium border bg-gray-100 text-gray-700 border-gray-200 cursor-default"
-                                                            >
-                                                                {lead.name}
-                                                            </div>
-                                                        ))
-                                                    ) : (
-                                                        <p className="text-gray-400 text-sm italic">
-                                                            {formData.department.length > 0 ? "No Team Leads found" : "Select a department first"}
-                                                        </p>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Project Leads (All Members) Column */}
-                                        <div className="flex flex-col">
-                                            <label className="block text-sm font-semibold text-gray-700 mb-2">Project Leads</label>
-                                            <div className="w-full px-4 py-3 rounded-lg border border-gray-300 bg-gray-50 focus-within:ring-2 focus-within:ring-blue-500 focus-within:bg-white transition h-auto max-h-64 overflow-y-auto scrollbar-hide">
-                                                <div className="flex flex-wrap gap-2">
-                                                    {projectLeads.length > 0 ? (
-                                                        projectLeads.map((lead) => (
-                                                            <button
-                                                                key={lead._id}
-                                                                type="button"
-                                                                onClick={() => handleProjectLeadToggle(lead._id)}
-                                                                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 border ${formData.projectLead.includes(lead._id)
-                                                                    ? "bg-blue-100 text-blue-700 border-blue-300"
-                                                                    : "bg-white text-gray-600 border-gray-200 hover:bg-gray-100"
-                                                                    }`}
-                                                            >
-                                                                {lead.name}
-                                                            </button>
-                                                        ))
-                                                    ) : (
-                                                        <p className="text-gray-400 text-sm italic">
-                                                            {formData.department.length > 0 ? "No members found" : "Select a department first"}
-                                                        </p>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Description</label>
-                                    <textarea rows="4" name="description" value={formData.description} onChange={handleChange}
-                                        className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition bg-gray-50 focus:bg-white scrollbar-hide" placeholder="Detailed description of the task requirements..." required></textarea>
-                                </div>
-
-                                {/* Assignment Section */}
-                                <div className="bg-gray-50 p-6 rounded-xl border border-gray-200">
-                                    <h3 className="text-lg font-bold text-gray-800 mb-4">Assign To</h3>
-
-                                    <div className="flex flex-wrap gap-4 sm:gap-6 mb-6">
-                                        {["Single", "Department", "Overall"].map((type) => (
-                                            <label key={type} className="flex items-center space-x-2 cursor-pointer">
-                                                <input
-                                                    type="radio"
-                                                    name="assignType"
-                                                    value={type}
-                                                    checked={formData.assignType === type}
-                                                    onChange={() => handleAssignTypeChange(type)}
-                                                    className="w-5 h-5 text-blue-600 focus:ring-blue-500 border-gray-300"
-                                                />
-                                                <span className="text-gray-700 font-medium">{type}</span>
-                                            </label>
-                                        ))}
-                                    </div>
-
-                                    {/* Multi-Select Logic */}
-                                    <div className="transition-all duration-300 ease-in-out">
-                                        {(formData.assignType === "Single" || formData.assignType === "Department") && (
-                                            <div className="space-y-4">
-                                                <p className="text-sm font-semibold text-gray-600">
-                                                    Select {formData.assignType === "Single" ? "Employees" : "Departments"}:
-                                                </p>
-
-                                                <div className="border border-gray-200 rounded-xl p-4 bg-white max-h-60 overflow-y-auto scrollbar-hide">
-                                                    <div className="flex flex-wrap gap-3">
-                                                        {(() => {
-                                                            let filteredOptions = [];
-                                                            if (formData.assignType === "Single") {
-                                                                // Filter Employees
-                                                                if (formData.department.length > 0) {
-                                                                    filteredOptions = employees.filter(emp =>
-                                                                        emp.role && emp.role.some(r => formData.department.includes(r))
-                                                                    );
-                                                                } else {
-                                                                    filteredOptions = employees;
-                                                                }
-                                                            } else {
-                                                                // Filter Departments
-                                                                if (formData.department.length > 0) {
-                                                                    filteredOptions = departments.filter(d => formData.department.includes(d));
-                                                                } else {
-                                                                    filteredOptions = departments;
-                                                                }
-                                                            }
-
-                                                            return filteredOptions.map((opt, idx) => {
-                                                                const val = formData.assignType === "Single" ? opt._id : opt;
-                                                                const label = formData.assignType === "Single" ? opt.name : opt;
-                                                                // Check presence in array
-                                                                const currentArr = Array.isArray(formData.assignee) ? formData.assignee : [];
-                                                                const isSelected = currentArr.includes(val);
-
-                                                                return (
-                                                                    <button
-                                                                        key={val}
-                                                                        type="button"
-                                                                        onClick={() => {
-                                                                            setFormData(prev => {
-                                                                                const oldArr = Array.isArray(prev.assignee) ? prev.assignee : [];
-                                                                                const newArr = oldArr.includes(val)
-                                                                                    ? oldArr.filter(item => item !== val)
-                                                                                    : [...oldArr, val];
-                                                                                return { ...prev, assignee: newArr };
-                                                                            });
-                                                                        }}
-                                                                        className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 border ${isSelected
-                                                                            ? "bg-blue-600 text-white border-blue-600 shadow-md transform scale-105"
-                                                                            : "bg-gray-100 text-gray-700 border-gray-200 hover:bg-gray-200 hover:border-gray-300"
-                                                                            }`}
-                                                                    >
-                                                                        {label}
-                                                                    </button>
-                                                                );
-                                                            });
-                                                        })()}
-                                                        {((formData.assignType === "Single" ? employees : departments).length === 0) && (
-                                                            <p className="text-gray-400 italic text-sm">No options available</p>
-                                                        )}
-                                                    </div>
-                                                </div>
-
-                                                {/* Selected Count Helper */}
-                                                <div className="text-xs text-gray-500 text-right">
-                                                    {(formData.assignee || []).length} selected
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {formData.assignType === "Overall" && (
-                                            <p className="text-gray-500 italic">This task will be visible to everyone.</p>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* Priority Section */}
-                                <div className="w-full mb-6">
-                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Priority</label>
-                                    <div className="flex flex-col sm:flex-row gap-4 w-full">
-                                        {["Low", "Medium", "High"].map(p => (
-                                            <button
-                                                key={p}
-                                                type="button"
-                                                onClick={() => setFormData(prev => ({ ...prev, priority: p }))}
-                                                className={`flex-1 py-3 rounded-lg font-medium border transition-all duration-200 ${formData.priority === p
-                                                    ? p === "High" ? "bg-red-100 border-red-500 text-red-700 shadow-sm"
-                                                        : p === "Medium" ? "bg-yellow-100 border-yellow-500 text-yellow-700 shadow-sm"
-                                                            : "bg-green-100 border-green-500 text-green-700 shadow-sm"
-                                                    : "bg-white border-gray-300 text-gray-600 hover:bg-gray-50 hover:border-gray-400"
-                                                    }`}
-                                            >
-                                                {p}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* Date Section */}
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 w-full">
-                                    <div>
-                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Start Date (Auto)</label>
-                                        <input type="date" name="startDate" value={formData.startDate} onChange={handleChange}
-                                            className="w-full px-4 py-2 rounded-lg border border-gray-300 bg-gray-100 text-gray-500 cursor-not-allowed" readOnly />
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Start Time (Auto)</label>
-                                        <input type="time" name="startTime" value={formData.startTime} onChange={handleChange}
-                                            className="w-full px-4 py-2 rounded-lg border border-gray-300 bg-gray-100 text-gray-500 cursor-not-allowed" readOnly />
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Due Date (Optional)</label>
-                                        <input type="date" name="dueDate" value={formData.dueDate || ""} onChange={handleChange}
-                                            className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition bg-white" />
-                                    </div>
-
-                                </div>
-
-                                {/* Attachments Section */}
-                                <div className="grid grid-cols-1 gap-8">
-                                    {/* Document Upload */}
-                                    <div>
-                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Documents</label>
-                                        <div onClick={() => fileInputRef.current.click()}
-                                            className="border-2 border-dashed border-gray-300 rounded-xl p-6 flex flex-col items-center justify-center bg-gray-50 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer h-40">
-                                            {formData.documents ? (
-                                                <div className="text-center">
-                                                    <p className="text-sm font-bold text-gray-800">{formData.documents.name}</p>
-                                                    <p className="text-xs text-gray-500">{(formData.documents.size / 1024).toFixed(1)} KB</p>
-                                                    <button onClick={(e) => { e.stopPropagation(); setFormData(prev => ({ ...prev, documents: null })); }} className="mt-2 text-red-500 hover:text-red-700 text-xs underline">Remove</button>
-                                                </div>
-                                            ) : (
-                                                <>
-                                                    <FaCloudUploadAlt className="w-10 h-10 text-gray-400 mb-2" />
-                                                    <span className="text-sm text-gray-600">Click to upload files</span>
-                                                </>
-                                            )}
-                                        </div>
-                                        <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
-                                    </div>
-
-                                    {/* Audio Recording/Upload */}
-                                    <div>
-                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Audio Instructions</label>
-                                        <div className="border border-gray-200 rounded-xl p-4 bg-white h-40 flex flex-col justify-center items-center relative">
-                                            {audioUrl ? (
-                                                <div className="w-full flex flex-col items-center">
-                                                    <audio controls src={audioUrl} className="w-full mb-2 h-10" />
-                                                    <button onClick={() => { setAudioUrl(null); setFormData(prev => ({ ...prev, audioFile: null })); }} className="text-xs text-red-500 hover:text-red-700 underline">Delete Audio</button>
-                                                </div>
-                                            ) : (
-                                                <div className="flex gap-4">
-                                                    <button type="button" onClick={isRecording ? stopRecording : startRecording}
-                                                        className={`p-4 rounded-full transition shadow-lg ${isRecording ? 'bg-red-500 animate-pulse text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
-                                                        {isRecording ? <FaStop size={20} /> : <FaMicrophone size={20} />}
-                                                    </button>
-                                                    <button type="button" onClick={() => audioInputRef.current.click()}
-                                                        className="p-4 bg-gray-100 text-gray-700 rounded-full hover:bg-gray-200 transition shadow-sm" title="Upload Audio File">
-                                                        <FaCloudUploadAlt size={20} />
-                                                    </button>
-                                                </div>
-                                            )}
-                                            {!audioUrl && <p className="mt-3 text-xs text-gray-500">{isRecording ? "Recording..." : "Record or Upload Audio"}</p>}
-                                        </div>
-                                        <input type="file" accept="audio/*" ref={audioInputRef} onChange={handleAudioUpload} className="hidden" />
-                                    </div>
-                                </div>
-
-                                {/* Form Actions */}
-                                <div className="flex justify-end pt-6 border-t">
-                                    <button type="button" onClick={() => setFormData({ ...formData, projectName: "", taskTitle: "", description: "" })} className="mr-4 px-6 py-3 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition">Cancel</button>
-
-                                    <button
-                                        type="submit"
-                                        disabled={isSubmitting || !formData.projectName || !formData.taskTitle || formData.department.length === 0 || !formData.description || ((formData.assignType === "Single" || formData.assignType === "Department") && formData.assignee.length === 0)}
-                                        className={`px-8 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg font-bold shadow-lg hover:shadow-xl transition transform ${(isSubmitting || !formData.projectName || !formData.taskTitle || formData.department.length === 0 || !formData.description || ((formData.assignType === "Single" || formData.assignType === "Department") && formData.assignee.length === 0))
-                                            ? 'opacity-50 cursor-not-allowed'
-                                            : 'hover:translate-y-[-2px]'
-                                            }`}
-                                    >
-                                        {isSubmitting ? "Creating..." : "Create Task Assignment"}
-                                    </button>
-                                </div>
-                            </form>
+                            {modalTab === "Individual Task" ? (
+                                renderIndividualForm()
+                            ) : (
+                                <GroupTaskAssignment isModal={true} onClose={onClose} onSuccess={onSuccess} />
+                            )}
 
                         </div>
                     </div>
 
 
                 </main>
+
+                {/* Hidden File Inputs */}
+                <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    className="hidden"
+                />
+                <input
+                    type="file"
+                    accept="audio/*"
+                    ref={audioInputRef}
+                    onChange={handleAudioUpload}
+                    className="hidden"
+                />
             </div>
         </div>
     );

@@ -58,6 +58,7 @@ const LogTimeModal = ({ task, employees = [], currentUserId = null, onClose, onS
             startTime: formData.startTime,
             endTime: formData.endTime,
             duration: durationStr, // Sending formatted string e.g. "4.5h"
+            priority: task.priority, // Include task priority
             description: formData.description
         };
 
@@ -79,7 +80,6 @@ const LogTimeModal = ({ task, employees = [], currentUserId = null, onClose, onS
                 alert(data.message || "Failed to log time");
             }
         } catch (error) {
-            console.error("Error logging time:", error);
             alert("Server Error");
         } finally {
             setIsSubmitting(false);

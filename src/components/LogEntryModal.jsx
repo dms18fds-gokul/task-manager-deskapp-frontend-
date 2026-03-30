@@ -15,7 +15,8 @@ const LogEntryModal = ({ isOpen, onClose, task, onSuccess, targetStatus }) => {
 
         duration: "",
         description: "",
-        employeeId: user?.id || user?._id
+        employeeId: user?.id || user?._id,
+        priority: "" // Add priority field
     });
 
     const [files, setFiles] = useState({
@@ -38,6 +39,7 @@ const LogEntryModal = ({ isOpen, onClose, task, onSuccess, targetStatus }) => {
                 projectName: task.projectName || "",
                 taskStartDate: `${startDate}${startTime} `,
                 logEndDate: endDate,
+                priority: task.priority || "Medium"
             }));
 
             // Auto-calculate Duration formatted string if we have both dates
@@ -84,6 +86,11 @@ const LogEntryModal = ({ isOpen, onClose, task, onSuccess, targetStatus }) => {
 
         try {
             const data = new FormData();
+            const now = new Date();
+            data.append("clientTime", now.toISOString());
+            data.append("localTimeStr", now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
+            data.append("localDateStr", now.toLocaleDateString('en-CA'));
+
             Object.keys(formData).forEach(key => {
                 data.append(key, formData[key]);
             });

@@ -1,6 +1,7 @@
 import Dashboard from "./pages/Dashboard";
 import TaskAssignment from "./pages/TaskAssignment";
 import Auth from "./pages/Auth";
+import UserOnlyAuth from "./pages/UserOnlyAuth";
 import EmployeeManagement from "./pages/EmployeeManagement";
 import EmployeeLogTime from "./pages/EmployeeLogTime";
 import EmployeeDashboard from "./pages/EmployeeDashboard";
@@ -11,151 +12,99 @@ import AdminTasksPage from "./pages/AdminTasksPage";
 import LogTime from "./pages/LogTime";
 import OfficeChat from "./pages/OfficeChat"; // Import Chat Page
 import CredentialsVault from "./pages/CredentialsVault"; // Import CredentialsVault
-import EmployeeTaskAssignment from "./pages/EmployeeTaskAssignment";
 import GroupTaskAssignment from "./pages/GroupTaskAssignment";
-import EmployeeGroupTaskAssignment from "./pages/EmployeeGroupTaskAssignment";
-import AssignedTasksPage from "./pages/AssignedTasksPage"; // Import
-import RamUsage from "./pages/RamUsage";
-import DeviceRamTable from "./pages/DeviceRamTable";
+// import AssignedTasksPage from "./pages/AssignedTasksPage"; // Removed console log import
 import AutoCapturePage from "./pages/AutoCapturePage";
 import EmployeeReportPage from "./pages/EmployeeReportPage";
 import ProjectReportPage from "./pages/ProjectReportPage";
 import EmployeeControlPage from "./pages/EmployeeControlPage"; // Added Settings page Route
+import EmployeeActiveControlPage from "./pages/EmployeeActiveControlPage"; // Active Control page
 import EmployeeLogsAndTaskControlPage from "./pages/EmployeeLogsAndTaskControlPage"; // New Logs/Task Control Page
 import EmployeeScreenshotControlPage from "./pages/EmployeeScreenshotControlPage"; // Screenshot Control Page
-import DocumentsApprovalPage from "./pages/DocumentsApprovalPage"; // Document Approval Page
-import DocumentApprovalsUserPage from "./pages/DocumentApprovalsUserPage"; // Document Approval Page
+
 import ChangePassword from "./pages/ChangePassword"; // Change Password Page
 import DiscussionNotepad from "./pages/DiscussionNotepad"; // Discussion Notepad Page
-import { Route, Routes, Navigate } from "react-router-dom";
-import { useEffect } from "react";
+import RecurringTasks from "./pages/RecurringTasks"; // Recurring Tasks Page
+import RecurringTaskPopup from "./pages/RecurringTaskPopup";
+import GuidePage from "./pages/GuidePage";
+import ActivityTrackingPage from "./pages/ActivityTrackingPage";
+import Settings from "./pages/Settings";
+import NotificationsView from "./components/notifications/NotificationsView";
+import ProtectedRoute from "./components/ProtectedRoute";
+import { Route, Routes, Navigate, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { API_URL } from "./utils/config";
 import { useSocket } from "./context/SocketContext";
+import { useUI } from "./context/UIContext";
+import { useAuth } from "./context/AuthContext";
+import FloatingActionButtons from "./components/FloatingActionButtons";
+import QuickTaskForm from "./components/QuickTaskForm";
+import IdleLock from "./components/IdleLock";
 import "./App.css";
 
 const App = () => {
+  const navigate = useNavigate();
   const { socket } = useSocket();
+  const { isFormOpen, formMode, closeForm } = useUI();
+  const { user } = useAuth();
+  const [mtTab, setMtTab] = useState("Individual Task");
 
-  useEffect(() => {
-    // 1. App Memory Tracker via Electron
-    if (window.electronAPI && window.electronAPI.getAppMemory) {
-      const reportMemory = async () => {
-        try {
-          // Requires user to be logged in to send their userId
-          const token = localStorage.getItem("token");
-          const userStr = localStorage.getItem("user");
-          if (!token || !userStr) return;
-
-          const user = JSON.parse(userStr);
-          const deviceId = await window.electronAPI.getDeviceId();
-          const ramUsageMB = await window.electronAPI.getAppMemory();
-
-          if (ramUsageMB) {
-            await fetch(`${API_URL}/metrics/ram`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-              },
-              body: JSON.stringify({
-                serialNumber: deviceId,
-                userId: user._id,
-                ramUsageMB,
-                osPlatform: 'desktop-app'
-              })
-            });
-          }
-        } catch (error) {
-          console.error("Failed to report app memory:", error);
-        }
-      };
-
-      // Report immediately, then every 1 second (1000ms)
-      reportMemory();
-      const intervalId = setInterval(reportMemory, 1000);
-
-      return () => clearInterval(intervalId);
-    }
-  }, []);
 
   // 2. Global WebSocket Listeners (e.g. for Admin remote toggles & Download Approvals)
+  const [activeToast, setActiveToast] = useState(null);
+
   useEffect(() => {
     if (!socket) return;
 
     const handleScreenshotToggle = (data) => {
       const { isActive, employeeId } = data;
-
-      // Ensure this event is meant for the currently logged-in user
-      const storedUserStr = localStorage.getItem("user");
-      if (storedUserStr) {
+      const userStr = localStorage.getItem("user");
+      if (userStr) {
         try {
-          const parsedUser = JSON.parse(storedUserStr);
-          if (parsedUser.employeeId === employeeId || parsedUser._id === employeeId || parsedUser.id === employeeId) {
-            console.log("Received live screenshot toggle update for this active user:", isActive);
-
+          const parsedUser = JSON.parse(userStr);
+          const userId = parsedUser._id || parsedUser.id;
+          if (userId === employeeId) {
             if (window.electronAPI && window.electronAPI.setScreenshotActivity) {
               window.electronAPI.setScreenshotActivity(isActive);
             }
-
-            // Persist locally so next app reload knows immediately
             parsedUser.screenshotActivity = isActive;
             localStorage.setItem("user", JSON.stringify(parsedUser));
           }
         } catch (e) {
-          console.error("Failed to parse local user for screenshot update", e);
         }
-      }
-    };
-
-    const handleDownloadApproved = async (data) => {
-      console.log("Download Approved by Admin:", data);
-      const { fileUrl, fileName, requestId } = data;
-
-      if (fileUrl) {
-        // Programmatically trigger the download robustly
-        try {
-          // Bypassing auto-download blocker by fetching the Blob first
-          const response = await fetch(fileUrl);
-          const blob = await response.blob();
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.style.display = "none";
-          a.href = url;
-          a.download = fileName || "downloaded_file";
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => {
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
-          }, 100);
-        } catch (error) {
-          console.error("Auto-download failed, falling back to direct link", error);
-          window.open(fileUrl, "_blank");
-        }
-        setTimeout(() => {
-          document.body.removeChild(a);
-        }, 100);
-
-        // Optional: Show a toast/alert notifying the user of the approval
-        // alert(`Your download request for "${fileName}" has been approved!`);
       }
     };
 
     const handleNewNotification = (notification) => {
-      // Optional: Could trigger a system toast/audio here if desired
-      console.log("New notification received:", notification);
+      setActiveToast(notification);
+      
+      try {
+        const audio = new Audio("/assets/notification.mp3");
+        audio.play().catch(() => {});
+      } catch (e) {}
+
+      setTimeout(() => {
+        setActiveToast(current => 
+          (current && current._id === notification._id) ? null : current
+        );
+      }, 8000);
     };
 
     socket.on("screenshotActivityUpdate", handleScreenshotToggle);
-    socket.on("download_approved", handleDownloadApproved);
     socket.on("new_notification", handleNewNotification);
+
+    // --- IPC Navigation Listener ---
+    if (window.electronAPI && window.electronAPI.onNavigate) {
+      window.electronAPI.onNavigate((targetPath) => {
+        navigate(targetPath);
+      });
+    }
 
     return () => {
       socket.off("screenshotActivityUpdate", handleScreenshotToggle);
-      socket.off("download_approved", handleDownloadApproved);
       socket.off("new_notification", handleNewNotification);
     };
-  }, [socket]);
+  }, [socket, navigate]);
 
   // 3. Global Synchronization for Offline Quick Tasks
   useEffect(() => {
@@ -169,13 +118,11 @@ const App = () => {
       try {
         offlineTasks = JSON.parse(offlineTasksStr);
       } catch (e) {
-        console.error("Failed to parse offline tasks", e);
         return;
       }
 
       if (offlineTasks.length === 0) return;
 
-      console.log(`Attempting to sync ${offlineTasks.length} offline tasks...`);
 
       const remainingTasks = [];
       for (const task of offlineTasks) {
@@ -187,13 +134,10 @@ const App = () => {
           });
 
           if (!res.ok) {
-            console.error("Failed to sync task:", task, await res.text());
             remainingTasks.push(task); // Keep it to try again later
           } else {
-            console.log("Successfully synced offline task:", task.taskTitle);
           }
         } catch (error) {
-          console.error("Error during offline task sync:", error);
           remainingTasks.push(task); // Keep it if network fails mid-sync
         }
       }
@@ -226,13 +170,11 @@ const App = () => {
       try {
         offlineAssignments = JSON.parse(offlineAssignmentsStr);
       } catch (e) {
-        console.error("Failed to parse offline assignments", e);
         return;
       }
 
       if (offlineAssignments.length === 0) return;
 
-      console.log(`Attempting to sync ${offlineAssignments.length} offline assignments...`);
 
       // Helper to convert Base64 back to Blob/File
       const base64ToFile = async (base64Data, filename, mimeType) => {
@@ -277,13 +219,10 @@ const App = () => {
           });
 
           if (!res.ok) {
-            console.error("Failed to sync assignment:", assignment.taskTitle, await res.text());
             remainingAssignments.push(assignment);
           } else {
-            console.log("Successfully synced offline assignment:", assignment.taskTitle);
           }
         } catch (error) {
-          console.error("Error during offline assignment sync:", error);
           remainingAssignments.push(assignment);
         }
       }
@@ -307,49 +246,90 @@ const App = () => {
   }, []);
 
   return (
-    <Routes>
-      <Route path="/" element={<Navigate to="/login" />} />
-      <Route path="/login" element={<Auth />} />
-      <Route path="/signup" element={<Auth />} />
+    <>
+      <Routes>
+        <Route path="/" element={<Navigate to="/login" />} />
+        <Route path="/login" element={<Auth />} />
+        <Route path="/signup" element={<Auth />} />
 
-      {/* Admin Routes */}
-      <Route path="/dashboard" element={<Dashboard />} />
-      <Route path="/assign-task" element={<TaskAssignment />} />
-      <Route path="/assign-group-task" element={<GroupTaskAssignment />} />
-      <Route path="/admin-tasks" element={<AdminTasksPage />} />
-      <Route path="/employee/add" element={<EmployeeManagement />} />
-      <Route path="/employee/edit-role" element={<EmployeeManagement />} />
-      <Route path="/employee-logs" element={<EmployeeLogSystemPage />} />
-      <Route path="/admin/auto-capture" element={<AutoCapturePage />} />
-      <Route path="/admin/monitoring-report/employee" element={<EmployeeReportPage />} />
-      <Route path="/admin/monitoring-report/project" element={<ProjectReportPage />} />
-      <Route path="/admin/settings/employee-login-control" element={<EmployeeControlPage />} />
-      <Route path="/admin/settings/employee-logs-tasks" element={<EmployeeLogsAndTaskControlPage />} />
-      <Route path="/admin/settings/screenshot-control" element={<EmployeeScreenshotControlPage />} />
-      <Route path="/admin/documents-approval" element={<DocumentsApprovalPage />} />
+        {/* Admin Routes */}
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/assign-task" element={<TaskAssignment />} />
+        <Route path="/assign-group-task" element={<GroupTaskAssignment />} />
+        <Route path="/admin-tasks" element={<AdminTasksPage />} />
+        <Route path="/employee/add" element={<EmployeeManagement />} />
+        <Route path="/employee/edit-role" element={<EmployeeManagement />} />
+        <Route path="/employee-logs" element={<EmployeeLogSystemPage />} />
+        <Route path="/admin/auto-capture" element={<AutoCapturePage />} />
+        <Route path="/admin/monitoring-report/employee" element={<EmployeeReportPage />} />
+        <Route path="/admin/monitoring-report/project" element={<ProjectReportPage />} />
+        <Route path="/admin/settings/employee-login-control" element={<EmployeeControlPage />} />
+        <Route path="/admin/settings/active-control" element={<EmployeeActiveControlPage />} />
+        <Route path="/admin/settings/employee-logs-tasks" element={<EmployeeLogsAndTaskControlPage />} />
+        <Route path="/admin/settings/screenshot-control" element={<EmployeeScreenshotControlPage />} />
 
-      {/* Employee Routes */}
-      <Route path="/employee-log-time" element={<EmployeeLogTime />} />
-      <Route path="/log-time" element={<LogTime />} />
-      <Route path="/employee-dashboard" element={<EmployeeDashboard />} />
-      <Route path="/employee-tasks" element={<EmployeeTaskPage />} />
-      <Route path="/employee/assign-task" element={<EmployeeTaskAssignment />} />
-      <Route path="/employee/assign-group-task" element={<EmployeeGroupTaskAssignment />} />
-      <Route path="/employee/document-approvals" element={<DocumentApprovalsUserPage />} />
-      <Route path="/assigned-tasks" element={<AssignedTasksPage />} /> {/* Added Route */}
-      <Route path="/apply-leave" element={<ApplyLeave />} />
-      <Route path="/change-password" element={<ChangePassword />} />
+        <Route path="/admin/activity-tracking" element={<ActivityTrackingPage />} />
 
-      {/* Common Routes */}
-      <Route path="/credentials-vault" element={<CredentialsVault />} />
-      <Route path="/discussion-notepad" element={<DiscussionNotepad />} />
-      <Route path="/admin/ram-usage" element={<RamUsage />} />
-      <Route path="/admin/device-ram" element={<DeviceRamTable />} />
+        {/* Employee Routes */}
+        <Route path="/employee-log-time" element={<EmployeeLogTime />} />
+        <Route path="/log-time" element={<LogTime />} />
+        <Route path="/employee-dashboard" element={<EmployeeDashboard />} />
+        <Route path="/employee-tasks" element={<EmployeeTaskPage />} />
+        <Route path="/employee/assign-task" element={<TaskAssignment />} />
+        <Route path="/employee/assign-group-task" element={<GroupTaskAssignment />} />
 
-      {/* Chat Route (Accessible to all authenticated users) */}
-      <Route path="/chat" element={<OfficeChat />} />
-      <Route path="/chat/:channelId" element={<OfficeChat />} />
-    </Routes>
+        <Route path="/assigned-tasks" element={<Navigate to="/employee-tasks" />} /> {/* Redirected to consolidated page */}
+        <Route path="/apply-leave" element={<ApplyLeave />} />
+        <Route path="/change-password" element={<ChangePassword />} />
+        <Route path="/recurring-tasks" element={<RecurringTasks />} />
+        <Route path="/employee/document-approvals" element={<NotificationsView />} />
+
+        {/* Common Routes */}
+        <Route path="/credentials-vault" element={<CredentialsVault />} />
+        <Route path="/discussion-notepad" element={<DiscussionNotepad />} />
+        <Route path="/settings" element={<Settings />} />
+
+        {/* Chat Route (Accessible to all authenticated users) */}
+        <Route path="/chat" element={<OfficeChat />} />
+        <Route path="/chat/:channelId" element={<OfficeChat />} />
+        <Route path="/guide" element={<GuidePage />} />
+      </Routes>
+      <FloatingActionButtons />
+      <IdleLock />
+
+      {/* Global Form Popup Overlay */}
+      <div className={`fixed bottom-6 right-4 md:right-28 w-[calc(100%-2rem)] md:w-full ${formMode === 'MT' ? (mtTab === 'Group Task' ? 'md:max-w-[600px]' : 'md:max-w-[450px]') : formMode === 'RT' ? 'md:max-w-[500px]' : 'md:max-w-[460px]'} h-[85vh] bg-white shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] z-50 rounded-2xl border border-gray-100 overflow-hidden transform transition-all duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${isFormOpen ? 'scale-100 opacity-100 translate-y-0' : 'scale-95 opacity-0 translate-y-10 pointer-events-none'}`}>
+        {isFormOpen && (
+          <div className="h-full flex flex-col">
+            {formMode === 'MT' ? (
+              <TaskAssignment
+                isModal={true}
+                onClose={closeForm}
+                onTabChange={setMtTab}
+                onSuccess={() => {
+                  closeForm();
+                  window.dispatchEvent(new Event('refreshLogs'));
+                  window.dispatchEvent(new Event('refreshTasks'));
+                }}
+              />
+            ) : formMode === 'RT' ? (
+              <RecurringTaskPopup onClose={closeForm} />
+            ) : (
+              <QuickTaskForm
+                key={formMode}
+                user={user}
+                onClose={closeForm}
+                onSuccess={() => {
+                  closeForm();
+                  window.dispatchEvent(new Event('refreshLogs'));
+                }}
+                initialIsMeeting={formMode === 'Meeting'}
+              />
+            )}
+          </div>
+        )}
+      </div>
+    </>
   );
 };
 

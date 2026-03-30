@@ -21,7 +21,7 @@ export const AuthProvider = ({ children }) => {
             setUser(parsedUser);
             setToken(storedToken);
             if (window.electronAPI && window.electronAPI.setAuthToken) {
-                window.electronAPI.setAuthToken(storedToken);
+                window.electronAPI.setAuthToken(storedToken, parsedUser);
             }
             if (window.electronAPI && window.electronAPI.setScreenshotActivity) {
                 // Determine if screenshot capture should be active. Default to true if undefined.
@@ -42,7 +42,6 @@ export const AuthProvider = ({ children }) => {
                             }
                         }
                     })
-                    .catch(err => console.error("Failed to refresh user data on boot:", err));
             }
         }
         setLoading(false);
@@ -55,7 +54,7 @@ export const AuthProvider = ({ children }) => {
         localStorage.setItem('token', token);
 
         if (window.electronAPI && window.electronAPI.setAuthToken) {
-            window.electronAPI.setAuthToken(token);
+            window.electronAPI.setAuthToken(token, userData);
         }
 
         if (window.electronAPI && window.electronAPI.setScreenshotActivity) {

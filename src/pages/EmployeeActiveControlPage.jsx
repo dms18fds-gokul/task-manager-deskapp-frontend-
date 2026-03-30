@@ -4,7 +4,7 @@ import { Settings, Users, AlertCircle, Search, Lock, X } from 'lucide-react';
 import axios from 'axios';
 import { API_URL } from '../utils/config';
 
-const EmployeeControlPage = () => {
+const EmployeeActiveControlPage = () => {
     const [employees, setEmployees] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -69,7 +69,7 @@ const EmployeeControlPage = () => {
         try {
             // Optimistic update for UI feel
             setEmployees(prev => prev.map(emp =>
-                emp.employeeId === employeeId ? { ...emp, isActive: !currentStatus } : emp
+                emp.employeeId === employeeId ? { ...emp, isProfileActive: !currentStatus } : emp
             ));
 
             const payload = {
@@ -77,7 +77,7 @@ const EmployeeControlPage = () => {
                 password: password || undefined
             };
 
-            await axios.patch(`${API_URL}/employee/${employeeId}/toggle-active`, payload);
+            await axios.patch(`${API_URL}/employee/${employeeId}/toggle-profile-active`, payload);
 
             // Close modal on success
             if (password) {
@@ -149,7 +149,7 @@ const EmployeeControlPage = () => {
                 <header className="bg-white border-b border-slate-200 p-4 flex justify-between items-center md:hidden z-10 sticky top-0">
                     <div className="flex items-center gap-2 text-indigo-600">
                         <Settings className="h-5 w-5" />
-                        <h1 className="text-lg font-bold text-slate-800 uppercase tracking-tight">Access Control</h1>
+                        <h1 className="text-lg font-bold text-slate-800 uppercase tracking-tight">Active Control</h1>
                     </div>
                     <button
                         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -170,10 +170,10 @@ const EmployeeControlPage = () => {
                         </div>
                         <h1 className="text-2xl md:text-3xl font-bold text-slate-800 flex items-center gap-3">
                             <Users className="h-8 w-8 text-indigo-500" />
-                            Employee Login Control
+                            Active Control
                         </h1>
                         <p className="text-slate-500 text-sm mt-1">
-                            Manage advanced employee login settings and activity configurations
+                            Manage employee active status and system access
                         </p>
                     </div>
                 </div>
@@ -222,7 +222,7 @@ const EmployeeControlPage = () => {
                                             <th className="px-6 py-4 font-bold">Email Address</th>
                                             <th className="px-6 py-4 font-bold">Department</th>
 
-                                            <th className="px-6 py-4 font-bold text-center">Login Access</th>
+                                            <th className="px-6 py-4 font-bold text-center">Activity</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
@@ -254,9 +254,9 @@ const EmployeeControlPage = () => {
                                                 <td className="px-6 py-4 align-middle text-center">
                                                     <div className="flex justify-center w-full">
                                                         <ThemeToggle
-                                                            isActive={emp.isActive !== false}
-                                                            onClick={() => handleToggleActive(emp.employeeId, emp.isActive !== false)}
-                                                            title={emp.isActive !== false ? "Active" : "Inactive"}
+                                                            isActive={emp.isProfileActive !== false}
+                                                            onClick={() => handleToggleActive(emp.employeeId, emp.isProfileActive !== false)}
+                                                            title={emp.isProfileActive !== false ? "Active" : "Inactive"}
                                                         />
                                                     </div>
                                                 </td>
@@ -301,7 +301,7 @@ const EmployeeControlPage = () => {
 
                         <div className="px-6 py-6">
                             <p className="text-sm text-slate-600 mb-6 leading-relaxed">
-                                You are about to <span className="font-bold text-red-600">deactivate</span> the account for employee <span className="font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded">{selectedEmployee}</span>. This action will immediately block their access. Please enter your admin password to confirm.
+                                You are about to <span className="font-bold text-red-600">hide</span> the profile dataset for employee <span className="font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded">{selectedEmployee}</span>. This action will immediately remove them from all UI reports and tables. Please enter your admin password to confirm.
                             </p>
 
                             <form onSubmit={handleConfirmDeactivation}>
@@ -353,4 +353,4 @@ const EmployeeControlPage = () => {
     );
 };
 
-export default EmployeeControlPage;
+export default EmployeeActiveControlPage;
